@@ -1,0 +1,8 @@
+*.dsn
+*.ses
+LedPcb10x14/autoroute_210710161923/
+LedPcb10x14/autoroute_210710162113/
+LedPcb10x14/LedPcb10x14-backups/LedPcb10x14-2021-07-10_164700.zip
+LedPcb10x14/LedPcb10x14-backups/
+*.pdf
+LedPicture_hw/LedPicture-backups/
