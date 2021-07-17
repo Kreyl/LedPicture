@@ -11097,10 +11097,10 @@
       (reference "C42") (unit 1) (value "47pF") (footprint "Capacitors:CAP_0402")
     )
     (path "/37b59c6a-5ca6-4288-9c93-33e667820335/1ee110e3-9d08-41a4-8d31-92320ff988df"
-      (reference "C43") (unit 1) (value "***") (footprint "Capacitors:CAP_0402")
+      (reference "C43") (unit 1) (value "2pF") (footprint "Capacitors:CAP_0402")
     )
     (path "/37b59c6a-5ca6-4288-9c93-33e667820335/28ebdf51-03e5-49a1-ac01-b4857215edb3"
-      (reference "C44") (unit 1) (value "***") (footprint "Capacitors:CAP_0402")
+      (reference "C44") (unit 1) (value "DoNotMount") (footprint "Capacitors:CAP_0402")
     )
     (path "/37b59c6a-5ca6-4288-9c93-33e667820335/b96aa476-7a5f-40d3-a71a-15cb39bfee7f"
       (reference "C45") (unit 1) (value "3.3pF") (footprint "Capacitors:CAP_0402")
@@ -11211,7 +11211,7 @@
       (reference "L6") (unit 1) (value "4.7nH") (footprint "Inductors:IND_0402")
     )
     (path "/37b59c6a-5ca6-4288-9c93-33e667820335/7fbd3981-a1b3-4eec-9c19-e0d73e567efe"
-      (reference "L7") (unit 1) (value "***") (footprint "Inductors:IND_0402")
+      (reference "L7") (unit 1) (value "6.8nH") (footprint "Inductors:IND_0402")
     )
     (path "/37b59c6a-5ca6-4288-9c93-33e667820335/9a6cea4e-2abc-4720-839d-54098e308517"
       (reference "L8") (unit 1) (value "10nH") (footprint "Inductors:IND_0402")

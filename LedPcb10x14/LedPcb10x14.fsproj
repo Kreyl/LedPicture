@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--*************************************-->
-<!--   File    : LedPcb10x14.fsproj      -->
-<!--   Format  : TopoR Project file      -->
-<!--   Version : 2                       -->
-<!--   Program : TopoR 8 Layer 7.0.18661 -->
-<!--   Date    : Sunday, July 11, 2021   -->
-<!--   Time    : 18:09                   -->
-<!--*************************************-->
+<!--**************************************-->
+<!--   File    : LedPcb10x14.fsproj       -->
+<!--   Format  : TopoR Project file       -->
+<!--   Version : 2                        -->
+<!--   Program : TopoR Lite 7.0.18707     -->
+<!--   Date    : Wednesday, July 14, 2021 -->
+<!--   Time    : 23:58                    -->
+<!--**************************************-->
 
 <Project>
    <Version current="2"/>
    <GUID>{949209A1-B06C-4CD8-891E-E27312FB6F1B}</GUID>
    <Documents>
       <Section name="PCB" isExpanded="true">
-         <File path=".\LedPcb10x14.fsx" isopened="0" dateChange="2021-07-10 15:49:05"/>
-         <File path=".\LedPicture.fsx" isopened="1" dateChange="2021-07-11 16:38:04"/>
+         <File path=".\LedPcb10x14.fsx" isopened="0" dateChange="2021-07-10 16:46:40"/>
+         <File path=".\LedPicture.fsx" isopened="1" dateChange="2021-07-11 17:37:52"/>
       </Section>
       <Section name="AutoRouting" isExpanded="true">
          <File path=".\autoroute_210710161923\LedPcb10x14_8418-217s.fsb" isopened="0" dateChange="2021-07-10 16:19:43"/>

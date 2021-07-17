@@ -405,7 +405,7 @@
       "idf": "",
       "netlist": "",
       "specctra_dsn": "LedPicture.dsn",
-      "step": "",
+      "step": "Factory/LedPicture.step",
       "vrml": ""
     },
     "page_layout_descr_file": ""
