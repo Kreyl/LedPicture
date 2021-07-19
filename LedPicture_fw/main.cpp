@@ -55,8 +55,8 @@ int main(void) {
 
     Lora.Init();
     Lora.SetChannel(868000000);
-    Lora.SetupTxConfigLora(2, bwLora125kHz, sprfact64chipsPersym, coderate4s5, true, 8);
-    Lora.SetupRxConfigLora(bwLora125kHz, sprfact64chipsPersym, coderate4s5, 8, 0, true, 9);
+    Lora.SetupTxConfigLora(2, bwLora125kHz, sprfact64chipsPersym, coderate4s5, true);
+    Lora.SetupRxConfigLora(bwLora125kHz, sprfact64chipsPersym, coderate4s5, true, 9);
 
     Led.StartOrRestart(lsqOk);
     // UsbMsd.Init();
@@ -111,8 +111,8 @@ void OnCmd(Shell_t *PShell) {
     else if(PCmd->NameIs("mem")) PrintMemoryInfo();
 
     else if(PCmd->NameIs("TX")) {
-        uint8_t Try[9] = {1,2,3,4,5,6,7,8,9};
-        Lora.TransmitByLora(Try, 9);
+        uint8_t Try[10] = {1,2,3,4,5,6,7,8,9, 0};
+        Lora.TransmitByLora(Try, 10);
         PShell->Ok();
     }
 
@@ -120,11 +120,13 @@ void OnCmd(Shell_t *PShell) {
         uint32_t Timeout_ms;
         uint8_t Try[9] = {0};
         if(PCmd->GetNext<uint32_t>(&Timeout_ms) == retvOk) {
-            if(Lora.ReceiveByLora(Try, 9, Timeout_ms) == retvOk) {
+            uint8_t Rslt = Lora.ReceiveByLora(Try, 9, Timeout_ms);
+            if(Rslt == retvOk) {
                 Printf("SNR: %d; RSSI: %d\r", Lora.RxParams.SNR, Lora.RxParams.RSSI);
                 Printf("%A\r\n", Try, 9, ' ');
             }
-            else Printf("Timeout\r");
+            else if(Rslt == retvTimeout) Printf("Timeout\r");
+            else Printf("CRC Err\r");
         }
         else PShell->CmdError();
     }

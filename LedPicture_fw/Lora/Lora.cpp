@@ -9,7 +9,6 @@
 #include "board.h"
 #include "kl_lib.h"
 #include "shell.h"
-#include "sx1276_Settings.h"
 
 Lora_t Lora;
 
@@ -18,6 +17,7 @@ Lora_t Lora;
 #define FREQ_STEP       61.03515625
 #define RX_BUFFER_SIZE  256
 #define RSSI_OFFSET_HF  -157 // Constant, see datasheet 5.5.5
+#define PREAMBLE_LEN    8 // Everyone use it
 
 static const Spi_t ISpi {SX_SPI};
 
@@ -25,6 +25,11 @@ static inline void NssHi() { PinSetHi(SX_NSS); }
 static inline void NssLo() { PinSetLo(SX_NSS); }
 
 // Precomputed FSK bandwidth registers values
+struct FskBandwidth_t {
+    uint32_t bandwidth;
+    uint8_t  RegValue;
+};
+
 const FskBandwidth_t FskBandwidths[] = {
     { 2600  , 0x17 },
     { 3100  , 0x0F },
@@ -53,7 +58,7 @@ const FskBandwidth_t FskBandwidths[] = {
 void SX_DIO0IrqHandler() { Lora.IIrqHandler(); }
 
 void Lora_t::IIrqHandler() {
-    PrintfI("IrqDIO0\r");
+//    PrintfI("IrqDIO0\r");
     if(Settings.RxCallback != nullptr) {
         Settings.RxCallback();
         Settings.RxCallback = nullptr;
@@ -79,7 +84,7 @@ uint8_t Lora_t::Init() {
     PinSetupAlterFunc(SX_MISO);
     PinSetupAlterFunc(SX_MOSI);
     // MSB first, master, ClkLowIdle, FirstEdge, Baudrate no more than 10MHz
-    ISpi.Setup(boMSB, cpolIdleLow, cphaFirstEdge, 1000000, bitn8);
+    ISpi.Setup(boMSB, cpolIdleLow, cphaFirstEdge, 10000000, bitn8);
     ISpi.Enable();
 
     // Release Reset
@@ -94,7 +99,7 @@ uint8_t Lora_t::Init() {
     }
 
     RxChainCalibration();
-    EnterSleep(); // XXX is it required?
+    EnterSleep();
 
     // ==== Write registers ====
     // Errata regs
@@ -123,8 +128,7 @@ uint8_t Lora_t::Init() {
     WriteReg(REG_LR_IRQFLAGS, 0xFF); // Clear IRQ flags
     PrintState();
 
-    // Be FSK again
-//    WriteReg(REG_OPMODE,         0b00000000); // FSK mode, LoraRegs, HF mode, SLEEP
+    DIO0.EnableIrq(IRQ_PRIO_MEDIUM);
     Printf("Lora Init ok\r\n");
     return retvOk;
 }
@@ -133,6 +137,7 @@ void Lora_t::PrintState() {
     Printf("PA: %02X; FifoPtr: %u; \r", ReadReg(0x09), ReadReg(0x0D));
     Printf("FifoCurr: %u; IrqFlags %02X\r", ReadReg(0x10), ReadReg(0x12));
     Printf("ModemStat: %02X; DIOMap1: %02X\r", ReadReg(0x18), ReadReg(0x40));
+    Printf("Mode: %02X\r", ReadReg(0x01));
     Printf("DIO: %u %u\r", PinIsHi(SX_DIO0_GPIO, SX_DIO0_PIN), PinIsHi(SX_DIO1_GPIO, SX_DIO1_PIN));
 }
 
@@ -179,8 +184,13 @@ void Lora_t::TransmitByLora(uint8_t *ptr, uint8_t Sz) {
     // DIO0 = TxDone irq
     WriteReg(REG_DIOMAPPING1, (ReadReg(REG_DIOMAPPING1) & RFLR_DIOMAPPING1_DIO0_MASK) | RFLR_DIOMAPPING1_DIO0_01);
     WriteReg(REG_LR_IRQFLAGS, 0xFF); // Clear all irq flags
+    // ==== Enter TX and wait IRQ ====
+    chSysLock();
+    Settings.RxCallback = nullptr;
     SetOpMode(RF_OPMODE_TRANSMITTER);
-    DIO0.EnableIrq(IRQ_PRIO_MEDIUM);
+    chThdSuspendS(&ThdRef); // Wait IRQ
+    chSysUnlock();
+    WriteReg(REG_LR_IRQFLAGS, 0xFF); // Clear all IRQs
 }
 
 uint8_t Lora_t::ReceiveByLora(uint8_t *ptr, uint8_t Sz, uint32_t Timeout_ms) {
@@ -220,10 +230,10 @@ uint8_t Lora_t::ReceiveByLora(uint8_t *ptr, uint8_t Sz, uint32_t Timeout_ms) {
     // FIFO
     WriteReg(REG_LR_FIFORXBASEADDR, 0);
     WriteReg(REG_LR_FIFOADDRPTR, 0);
+    WriteReg(REG_LR_PAYLOADLENGTH, Sz);
 
     // ==== Enter RX and wait IRQ ====
     chSysLock();
-    DIO0.EnableIrq(IRQ_PRIO_MEDIUM);
     SetOpMode(RFLR_OPMODE_RECEIVER); // Receive forever
     msg_t Rslt = chThdSuspendTimeoutS(&ThdRef, TIME_MS2I(Timeout_ms)); // Wait IRQ
     chSysUnlock();
@@ -299,8 +309,7 @@ void Lora_t::SetLoraModem() {
  *   preambleLen
  */
 void Lora_t::SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth,
-        SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate,
-        bool FixLen, uint16_t preambleLen) {
+        SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate, bool FixLen) {
     SetLoraModem();
     SetTxPower(power);
     Settings.Bandwidth = bandwidth;
@@ -313,8 +322,8 @@ void Lora_t::SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth,
     WriteReg(REG_LR_MODEMCONFIG2, ((uint8_t)SpreadingFactor << 4) | (1 << 2)); // RX CRC on
     WriteReg(REG_LR_MODEMCONFIG3, (LowDatarateOptimize? (1 << 3) : 0) | (1 << 2)); // Agc auto on
 
-    WriteReg(REG_LR_PREAMBLEMSB, (preambleLen >> 8) & 0x00FF);
-    WriteReg(REG_LR_PREAMBLELSB, preambleLen & 0xFF);
+    WriteReg(REG_LR_PREAMBLEMSB, (PREAMBLE_LEN >> 8) & 0x00FF);
+    WriteReg(REG_LR_PREAMBLELSB, PREAMBLE_LEN & 0xFF);
 
     if(SpreadingFactor == sprfact64chipsPersym) {
         WriteReg(REG_LR_DETECTOPTIMIZE, (ReadReg(REG_LR_DETECTOPTIMIZE) & RFLR_DETECTIONOPTIMIZE_MASK) | RFLR_DETECTIONOPTIMIZE_SF6);
@@ -328,7 +337,6 @@ void Lora_t::SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth,
 
 void Lora_t::SetupRxConfigLora(SXLoraBW_t bandwidth,
         SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate,
-        uint16_t preambleLen, uint16_t symbTimeout,
         bool FixLen, uint8_t payloadLen) {
     SetLoraModem();
     Settings.Bandwidth = bandwidth;
@@ -338,13 +346,13 @@ void Lora_t::SetupRxConfigLora(SXLoraBW_t bandwidth,
             ((bandwidth == bwLora250kHz) and ( SpreadingFactor == sprfact4096chipsPersym));
 
     WriteReg(REG_LR_MODEMCONFIG1, ((uint8_t)bandwidth << 4) | ((uint8_t)coderate << 1) | (FixLen? 1 : 0));
-    WriteReg(REG_LR_MODEMCONFIG2, ((uint8_t)SpreadingFactor << 4) | (1 << 2) | (uint8_t)((symbTimeout >> 8) & 0b11U)); // RX CRC on
+    WriteReg(REG_LR_MODEMCONFIG2, ((uint8_t)SpreadingFactor << 4) | (1 << 2)); // RX CRC on
     WriteReg(REG_LR_MODEMCONFIG3, (LowDatarateOptimize? (1 << 3) : 0) | (1 << 2)); // Agc auto on
 
-    WriteReg(REG_LR_SYMBTIMEOUTLSB, (uint8_t)(symbTimeout & 0xFF));
+    WriteReg(REG_LR_SYMBTIMEOUTLSB, 0);
 
-    WriteReg(REG_LR_PREAMBLEMSB, (preambleLen >> 8) & 0x00FF);
-    WriteReg(REG_LR_PREAMBLELSB, preambleLen & 0xFF);
+    WriteReg(REG_LR_PREAMBLEMSB, (PREAMBLE_LEN >> 8) & 0x00FF);
+    WriteReg(REG_LR_PREAMBLELSB, PREAMBLE_LEN & 0xFF);
 
     if(FixLen) WriteReg(REG_LR_PAYLOADLENGTH, payloadLen);
 
