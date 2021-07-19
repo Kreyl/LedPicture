@@ -68,8 +68,11 @@ public:
         bool FskFreqHopOn = false;
         uint8_t FreqHopPeriod = 0;
         ftVoidVoid RxCallback;
-        int16_t SNR, RSSI;
     } Settings;
+
+    struct {
+        int16_t SNR, RSSI;
+    } RxParams;
 
     void SetChannel(uint32_t freq);
     bool IsChannelFreeLora(uint32_t freq, int16_t rssiThresh, uint32_t maxCarrierSenseTime);

@@ -221,39 +221,28 @@ uint8_t Lora_t::ReceiveByLora(uint8_t *ptr, uint8_t Sz, uint32_t Timeout_ms) {
     WriteReg(REG_LR_FIFORXBASEADDR, 0);
     WriteReg(REG_LR_FIFOADDRPTR, 0);
 
-#if 1 // ==== Enter RX and wait IRQ ====
+    // ==== Enter RX and wait IRQ ====
     chSysLock();
     DIO0.EnableIrq(IRQ_PRIO_MEDIUM);
-
-//    SetOpMode(RFLR_OPMODE_RECEIVER_SINGLE);
-    SetOpMode(RFLR_OPMODE_RECEIVER);
-
+    SetOpMode(RFLR_OPMODE_RECEIVER); // Receive forever
     msg_t Rslt = chThdSuspendTimeoutS(&ThdRef, TIME_MS2I(Timeout_ms)); // Wait IRQ
     chSysUnlock();
     // Will be here when IRQ will fire, or timeout occur - with appropriate message
-    if(Rslt == MSG_TIMEOUT) {   // Nothing received, timeout occured
-        EnterStandby();         // Get out of RX mode
-        return retvTimeout;
-    }
-#endif
-    // ==== RxDone happened ====
-    // Clear RxDone IRQ
-    WriteReg(REG_LR_IRQFLAGS, RFLR_IRQFLAGS_RXDONE);
+    EnterStandby();         // Get out of RX mode
+    if(Rslt == MSG_TIMEOUT) return retvTimeout; // Nothing received, timeout occured
 
+    // ==== RxDone happened ====
     uint8_t irqFlags = ReadReg(REG_LR_IRQFLAGS);
-    // Is CRC ok?
-    if(irqFlags & RFLR_IRQFLAGS_PAYLOADCRCERROR_MASK) {
-        WriteReg(REG_LR_IRQFLAGS, RFLR_IRQFLAGS_PAYLOADCRCERROR_MASK); // Clear IRQ
-        return retvCRCError;
-    }
+    WriteReg(REG_LR_IRQFLAGS, 0xFF); // Clear all IRQs
+    // Check CRC
+    if(irqFlags & RFLR_IRQFLAGS_PAYLOADCRCERROR_MASK) return retvCRCError;
 
     // Read SNR and RSSI
-    Settings.SNR = (((int16_t)ReadReg(REG_LR_PKTSNRVALUE)) + 2) >> 2;
+    RxParams.SNR = (((int16_t)ReadReg(REG_LR_PKTSNRVALUE)) + 2) >> 2;
     int16_t rssiReg = ReadReg(REG_LR_PKTRSSIVALUE);
-    if(Settings.SNR < 0) Settings.RSSI = RSSI_OFFSET_HF + rssiReg + (rssiReg >> 4) + Settings.SNR;
-    else                 Settings.RSSI = RSSI_OFFSET_HF + rssiReg + (rssiReg >> 4);
+    if(RxParams.SNR < 0) RxParams.RSSI = RSSI_OFFSET_HF + rssiReg + (rssiReg >> 4) + RxParams.SNR;
+    else                 RxParams.RSSI = RSSI_OFFSET_HF + rssiReg + (rssiReg >> 4);
 
-    WriteReg(REG_LR_FIFOADDRPTR, ReadReg(REG_LR_FIFORXCURRENTADDR));
     // Read FIFO
     uint8_t RegSz = ReadReg(REG_LR_RXNBBYTES);
     if(RegSz > Sz) RegSz = Sz;

@@ -121,6 +121,7 @@ void OnCmd(Shell_t *PShell) {
         uint8_t Try[9] = {0};
         if(PCmd->GetNext<uint32_t>(&Timeout_ms) == retvOk) {
             if(Lora.ReceiveByLora(Try, 9, Timeout_ms) == retvOk) {
+                Printf("SNR: %d; RSSI: %d\r", Lora.RxParams.SNR, Lora.RxParams.RSSI);
                 Printf("%A\r\n", Try, 9, ' ');
             }
             else Printf("Timeout\r");
