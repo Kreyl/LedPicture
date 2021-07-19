@@ -124,9 +124,9 @@ uint8_t Lora_t::Init() {
 
     // LoRa regs
     WriteReg(REG_OPMODE, 0b10000000); // LoRa mode, LoraRegs, HF mode, SLEEP
-    WriteReg(REG_LR_PAYLOADMAXLENGTH, 0x40);  // maximum payload length
+    WriteReg(REG_LR_PAYLOADMAXLENGTH, 64);  // maximum payload length = FIFO sz
     WriteReg(REG_LR_IRQFLAGS, 0xFF); // Clear IRQ flags
-    PrintState();
+//    PrintState();
 
     DIO0.EnableIrq(IRQ_PRIO_MEDIUM);
     Printf("Lora Init ok\r\n");
@@ -146,7 +146,7 @@ void Lora_t::PrintRegs() {
     PrintfI("########\r\n");
 }
 
-void Lora_t::TransmitByLora(uint8_t *ptr, uint8_t Sz) {
+uint32_t Lora_t::TransmitByLora(uint8_t *ptr, uint8_t Sz) {
     if(Settings.IqInverted) {
         WriteReg(REG_LR_INVERTIQ, ((ReadReg(REG_LR_INVERTIQ) & RFLR_INVERTIQ_TX_MASK & RFLR_INVERTIQ_RX_MASK) | RFLR_INVERTIQ_RX_OFF | RFLR_INVERTIQ_TX_ON));
         WriteReg(REG_LR_INVERTIQ2, RFLR_INVERTIQ2_ON);
@@ -187,13 +187,16 @@ void Lora_t::TransmitByLora(uint8_t *ptr, uint8_t Sz) {
     // ==== Enter TX and wait IRQ ====
     chSysLock();
     Settings.RxCallback = nullptr;
+    systime_t Start = chVTGetSystemTimeX();
     SetOpMode(RF_OPMODE_TRANSMITTER);
     chThdSuspendS(&ThdRef); // Wait IRQ
     chSysUnlock();
+    uint32_t t = TIME_I2MS(chVTTimeElapsedSinceX(Start));
     WriteReg(REG_LR_IRQFLAGS, 0xFF); // Clear all IRQs
+    return t;
 }
 
-uint8_t Lora_t::ReceiveByLora(uint8_t *ptr, uint8_t Sz, uint32_t Timeout_ms) {
+uint8_t Lora_t::ReceiveByLora(uint8_t *ptr, uint8_t *pSz, uint32_t Timeout_ms) {
     if(Settings.IqInverted) {
         WriteReg(REG_LR_INVERTIQ, ((ReadReg(REG_LR_INVERTIQ) & RFLR_INVERTIQ_TX_MASK & RFLR_INVERTIQ_RX_MASK) | RFLR_INVERTIQ_RX_ON | RFLR_INVERTIQ_TX_OFF));
         WriteReg(REG_LR_INVERTIQ2, RFLR_INVERTIQ2_ON);
@@ -230,7 +233,7 @@ uint8_t Lora_t::ReceiveByLora(uint8_t *ptr, uint8_t Sz, uint32_t Timeout_ms) {
     // FIFO
     WriteReg(REG_LR_FIFORXBASEADDR, 0);
     WriteReg(REG_LR_FIFOADDRPTR, 0);
-    WriteReg(REG_LR_PAYLOADLENGTH, Sz);
+    WriteReg(REG_LR_PAYLOADLENGTH, *pSz);
 
     // ==== Enter RX and wait IRQ ====
     chSysLock();
@@ -255,7 +258,8 @@ uint8_t Lora_t::ReceiveByLora(uint8_t *ptr, uint8_t Sz, uint32_t Timeout_ms) {
 
     // Read FIFO
     uint8_t RegSz = ReadReg(REG_LR_RXNBBYTES);
-    if(RegSz > Sz) RegSz = Sz;
+    if(RegSz > *pSz) RegSz = *pSz;
+    else *pSz = RegSz;
     ReadFifo(ptr, RegSz);
 
     return retvOk;
@@ -309,7 +313,12 @@ void Lora_t::SetLoraModem() {
  *   preambleLen
  */
 void Lora_t::SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth,
-        SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate, bool FixLen) {
+        SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate, SXHeaderMode_t HeaderMode) {
+    if(SpreadingFactor == sprfact64chipsPersym and HeaderMode == hdrmodeExplicit) {
+        Printf("Lora bad mode\r"); // See datasheet
+        return;
+    }
+
     SetLoraModem();
     SetTxPower(power);
     Settings.Bandwidth = bandwidth;
@@ -318,7 +327,7 @@ void Lora_t::SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth,
             ((bandwidth == bwLora125kHz) and ((SpreadingFactor == sprfact2048chipsPersym) or (SpreadingFactor == sprfact4096chipsPersym))) ||
             ((bandwidth == bwLora250kHz) and ( SpreadingFactor == sprfact4096chipsPersym));
 
-    WriteReg(REG_LR_MODEMCONFIG1, ((uint8_t)bandwidth << 4) | ((uint8_t)coderate << 1) | (FixLen? 1 : 0));
+    WriteReg(REG_LR_MODEMCONFIG1, ((uint8_t)bandwidth << 4) | ((uint8_t)coderate << 1) | (uint8_t)HeaderMode);
     WriteReg(REG_LR_MODEMCONFIG2, ((uint8_t)SpreadingFactor << 4) | (1 << 2)); // RX CRC on
     WriteReg(REG_LR_MODEMCONFIG3, (LowDatarateOptimize? (1 << 3) : 0) | (1 << 2)); // Agc auto on
 
@@ -337,7 +346,7 @@ void Lora_t::SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth,
 
 void Lora_t::SetupRxConfigLora(SXLoraBW_t bandwidth,
         SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate,
-        bool FixLen, uint8_t payloadLen) {
+        SXHeaderMode_t HeaderMode, uint8_t payloadLen) {
     SetLoraModem();
     Settings.Bandwidth = bandwidth;
 
@@ -345,7 +354,7 @@ void Lora_t::SetupRxConfigLora(SXLoraBW_t bandwidth,
             ((bandwidth == bwLora125kHz) and ((SpreadingFactor == sprfact2048chipsPersym) or (SpreadingFactor == sprfact4096chipsPersym))) ||
             ((bandwidth == bwLora250kHz) and ( SpreadingFactor == sprfact4096chipsPersym));
 
-    WriteReg(REG_LR_MODEMCONFIG1, ((uint8_t)bandwidth << 4) | ((uint8_t)coderate << 1) | (FixLen? 1 : 0));
+    WriteReg(REG_LR_MODEMCONFIG1, ((uint8_t)bandwidth << 4) | ((uint8_t)coderate << 1) | (uint8_t)HeaderMode);
     WriteReg(REG_LR_MODEMCONFIG2, ((uint8_t)SpreadingFactor << 4) | (1 << 2)); // RX CRC on
     WriteReg(REG_LR_MODEMCONFIG3, (LowDatarateOptimize? (1 << 3) : 0) | (1 << 2)); // Agc auto on
 
@@ -354,7 +363,7 @@ void Lora_t::SetupRxConfigLora(SXLoraBW_t bandwidth,
     WriteReg(REG_LR_PREAMBLEMSB, (PREAMBLE_LEN >> 8) & 0x00FF);
     WriteReg(REG_LR_PREAMBLELSB, PREAMBLE_LEN & 0xFF);
 
-    if(FixLen) WriteReg(REG_LR_PAYLOADLENGTH, payloadLen);
+    if(HeaderMode == hdrmodeImplicit) WriteReg(REG_LR_PAYLOADLENGTH, payloadLen);
 
     // See ERRATA 2.1
     if(bandwidth == bwLora500kHz) {

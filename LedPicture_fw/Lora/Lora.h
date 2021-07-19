@@ -13,8 +13,10 @@
 #include "sx1276Regs-LoRa.h"
 
 #define SX_RF_OUT_PABOOST   TRUE  // Set to TRUE if RF out is PA_BOOST, and to FALSE if RFO_HF
+#define LORA_FIFO_SZ        64 // const, see datasheet
 
 // When using LoRa modem only bandwidths 125, 250 and 500 kHz are supported
+// Each doubling of the bandwidth correlates to almost 3dB less link budget.
 enum SXLoraBW_t : uint8_t {
     bwLora125kHz = 0b0111, // their ID: 7
     bwLora250kHz = 0b1000, // their ID: 8
@@ -36,6 +38,11 @@ enum SXSpreadingFactor_t : uint8_t {
     sprfact1024chipsPersym = 10,
     sprfact2048chipsPersym = 11,
     sprfact4096chipsPersym = 12
+};
+
+enum SXHeaderMode_t : uint8_t {
+    hdrmodeExplicit = 0,
+    hdrmodeImplicit = 1
 };
 
 void SX_DIO0IrqHandler();
@@ -77,14 +84,14 @@ public:
     bool IsChannelFreeLora(uint32_t freq, int16_t rssiThresh, uint32_t maxCarrierSenseTime);
     void SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth,
             SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate,
-            bool FixLen);
+            SXHeaderMode_t HeaderMode);
     void SetupRxConfigLora(SXLoraBW_t bandwidth,
             SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate,
-            bool FixLen, uint8_t payloadLen);
+            SXHeaderMode_t HeaderMode, uint8_t payloadLen);
 
     uint8_t Init();
-    void TransmitByLora(uint8_t *ptr, uint8_t Sz);
-    uint8_t ReceiveByLora(uint8_t *ptr, uint8_t Sz, uint32_t Timeout_ms);
+    uint32_t TransmitByLora(uint8_t *ptr, uint8_t Sz);
+    uint8_t ReceiveByLora(uint8_t *ptr, uint8_t *pSz, uint32_t Timeout_ms);
 
     // Dbg
     void PrintState();

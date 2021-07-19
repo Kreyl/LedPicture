@@ -55,8 +55,8 @@ int main(void) {
 
     Lora.Init();
     Lora.SetChannel(868000000);
-    Lora.SetupTxConfigLora(2, bwLora125kHz, sprfact64chipsPersym, coderate4s5, true);
-    Lora.SetupRxConfigLora(bwLora125kHz, sprfact64chipsPersym, coderate4s5, true, 9);
+
+
 
     Led.StartOrRestart(lsqOk);
     // UsbMsd.Init();
@@ -102,6 +102,26 @@ void ITask() {
     } // while true
 }
 
+const char* strBW[3] = {"125kHz", "250kHz", "500kHz"};
+SXLoraBW_t bw[3] = {bwLora125kHz, bwLora250kHz, bwLora500kHz};
+
+
+const char* strSF[7] = {
+        "64cps", "128cps", "256cps", "512cps", "1024cps", "2048cps", "4096cps"
+};
+SXSpreadingFactor_t sf[7] = {sprfact64chipsPersym, sprfact128chipsPersym, sprfact256chipsPersym,
+        sprfact512chipsPersym, sprfact1024chipsPersym, sprfact2048chipsPersym, sprfact4096chipsPersym
+};
+
+const char* strCR[4] = {
+        "4s5", "4s6", "4s7", "4s8"
+};
+
+SXCodingRate_t CR[4] = {
+        coderate4s5, coderate4s6, coderate4s7, coderate4s8
+};
+
+
 #if 1 // ======================= Command processing ============================
 void OnCmd(Shell_t *PShell) {
 	Cmd_t *PCmd = &PShell->Cmd;
@@ -110,23 +130,51 @@ void OnCmd(Shell_t *PShell) {
     else if(PCmd->NameIs("Version")) PShell->Print("%S %S\r", APP_NAME, XSTRINGIFY(BUILD_TIME));
     else if(PCmd->NameIs("mem")) PrintMemoryInfo();
 
-    else if(PCmd->NameIs("TX")) {
-        uint8_t Try[10] = {1,2,3,4,5,6,7,8,9, 0};
-        Lora.TransmitByLora(Try, 10);
+    else if(PCmd->NameIs("TXDur")) {
+        uint8_t Try[LORA_FIFO_SZ] = {7};
+        for(int i=0; i<3; i++) {
+            for(int j=1; j<7; j++) {
+                for(int k=0; k<4; k++) {
+                    Lora.SetupTxConfigLora(2, bw[i], sf[j], CR[k], hdrmodeExplicit);
+                    Printf(" 4; %S; %S; %S; %u\r\n", strBW[i], strSF[j], strCR[k], Lora.TransmitByLora(Try,  4));
+                    Printf("10; %S; %S; %S; %u\r\n", strBW[i], strSF[j], strCR[k], Lora.TransmitByLora(Try, 10));
+                    Printf("20; %S; %S; %S; %u\r\n", strBW[i], strSF[j], strCR[k], Lora.TransmitByLora(Try, 20));
+                    Printf("40; %S; %S; %S; %u\r\n", strBW[i], strSF[j], strCR[k], Lora.TransmitByLora(Try, 40));
+                    Printf("64; %S; %S; %S; %u\r\n", strBW[i], strSF[j], strCR[k], Lora.TransmitByLora(Try, 64));
+                }
+            }
+        }
         PShell->Ok();
     }
 
+    else if(PCmd->NameIs("TX")) {
+        uint8_t Try[LORA_FIFO_SZ] = {7};
+        uint8_t Len, BWIndx, SFIndx, CRIndx;
+        if(PCmd->GetParams<uint8_t>(4, &Len, &BWIndx, &SFIndx, &CRIndx) == retvOk) {
+            Lora.SetupTxConfigLora(2, bw[BWIndx], sf[SFIndx], CR[CRIndx], hdrmodeExplicit);
+            Printf("%u; %S; %S; %S; Dur=%u\r\n", Len, strBW[BWIndx], strSF[SFIndx], strCR[CRIndx], Lora.TransmitByLora(Try, Len));
+            PShell->Ok();
+        }
+        else PShell->CmdError();
+    }
+
+
     else if(PCmd->NameIs("RX")) {
+        uint8_t Try[LORA_FIFO_SZ] = {7};
+        uint8_t Len, BWIndx, SFIndx, CRIndx;
         uint32_t Timeout_ms;
-        uint8_t Try[9] = {0};
-        if(PCmd->GetNext<uint32_t>(&Timeout_ms) == retvOk) {
-            uint8_t Rslt = Lora.ReceiveByLora(Try, 9, Timeout_ms);
-            if(Rslt == retvOk) {
-                Printf("SNR: %d; RSSI: %d\r", Lora.RxParams.SNR, Lora.RxParams.RSSI);
-                Printf("%A\r\n", Try, 9, ' ');
+        if(PCmd->GetParams<uint8_t>(4, &Len, &BWIndx, &SFIndx, &CRIndx) == retvOk) {
+            Lora.SetupRxConfigLora(bw[BWIndx], sf[SFIndx], CR[CRIndx], hdrmodeExplicit, Len);
+            if(PCmd->GetNext<uint32_t>(&Timeout_ms) == retvOk) {
+                uint8_t Rslt = Lora.ReceiveByLora(Try, &Len, Timeout_ms);
+                if(Rslt == retvOk) {
+                    Printf("SNR: %d; RSSI: %d; Len: %u\r", Lora.RxParams.SNR, Lora.RxParams.RSSI, Len);
+                    Printf("%A\r\n", Try, Len, ' ');
+                }
+                else if(Rslt == retvTimeout) Printf("Timeout\r");
+                else Printf("CRC Err\r");
             }
-            else if(Rslt == retvTimeout) Printf("Timeout\r");
-            else Printf("CRC Err\r");
+            else PShell->CmdError();
         }
         else PShell->CmdError();
     }
