@@ -13,7 +13,7 @@
 
 const LedSmoothChunk_t lsqOk[] = {
         {csSetup, 207, LED_TOP_BRIGHTNESS},
-        {csSetup, 207, 4},
+        {csSetup, 207, 45},
         {csEnd}
 };
 

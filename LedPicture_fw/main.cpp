@@ -6,13 +6,14 @@
 //#include "usb_msd.h"
 #include "Sequences.h"
 #include "kl_i2c.h"
+#include "Lora.h"
 #endif
 #if 1 // ======================== Variables & prototypes =======================
 // Forever
 bool OsIsInitialized = false;
 EvtMsgQ_t<EvtMsg_t, MAIN_EVT_Q_LEN> EvtQMain;
 static const UartParams_t CmdUartParams(115200, CMD_UART_PARAMS);
-CmdUart_t Uart{&CmdUartParams};
+CmdUart_t Uart{CmdUartParams};
 void OnCmd(Shell_t *PShell);
 void ITask();
 
@@ -28,6 +29,7 @@ int main(void) {
 
 #if 1 // ==== Iwdg, Clk, Os, EvtQ, Uart ====
     // Setup clock frequency
+    Clk.SetupPllSrc(pllsrcHse);
     Clk.SetCoreClk(cclk48MHz);
     // 48MHz clock
     Clk.SetupSai1Qas48MhzSrc();
@@ -49,13 +51,12 @@ int main(void) {
     PwrEn.SetHi();
 //    PinUsbDetect.Init();
 
-    i2c3.Init();
+//    i2c3.Init();
 
-//    Lora.Init();
-//    Lora.SetChannel(868000000);
-//    Lora.SetupTxConfigLora(2, bwLora125kHz, sprfact64chipsPersym, coderate4s5, true, 8);
-//    uint8_t Try[9] = {1,2,3,4,5,6,7,8,9};
-//    Lora.TransmitByLora(Try, 9);
+    Lora.Init();
+    Lora.SetChannel(868000000);
+    Lora.SetupTxConfigLora(2, bwLora125kHz, sprfact64chipsPersym, coderate4s5, true, 8);
+    Lora.SetupRxConfigLora(bwLora125kHz, sprfact64chipsPersym, coderate4s5, 8, 0, true, 9);
 
     Led.StartOrRestart(lsqOk);
     // UsbMsd.Init();
@@ -69,9 +70,8 @@ void ITask() {
     while(true) {
         EvtMsg_t Msg = EvtQMain.Fetch(TIME_INFINITE);
         switch(Msg.ID) {
-            case evtIdShellCmd:
-                OnCmd((Shell_t*)Msg.Ptr);
-                ((Shell_t*)Msg.Ptr)->SignalCmdProcessed();
+            case evtIdShellCmdRcvd:
+                while(((CmdUart_t*)Msg.Ptr)->TryParseRxBuff() == retvOk) OnCmd((Shell_t*)((CmdUart_t*)Msg.Ptr));
                 break;
 
             case evtIdEverySecond:
@@ -106,11 +106,33 @@ void ITask() {
 void OnCmd(Shell_t *PShell) {
 	Cmd_t *PCmd = &PShell->Cmd;
     // Handle command
-    if(PCmd->NameIs("Ping")) PShell->Ack(retvOk);
+    if(PCmd->NameIs("Ping")) PShell->Ok();
     else if(PCmd->NameIs("Version")) PShell->Print("%S %S\r", APP_NAME, XSTRINGIFY(BUILD_TIME));
     else if(PCmd->NameIs("mem")) PrintMemoryInfo();
 
+    else if(PCmd->NameIs("TX")) {
+        uint8_t Try[9] = {1,2,3,4,5,6,7,8,9};
+        Lora.TransmitByLora(Try, 9);
+        PShell->Ok();
+    }
 
-    else PShell->Ack(retvCmdUnknown);
+    else if(PCmd->NameIs("RX")) {
+        uint32_t Timeout_ms;
+        uint8_t Try[9] = {0};
+        if(PCmd->GetNext<uint32_t>(&Timeout_ms) == retvOk) {
+            if(Lora.ReceiveByLora(Try, 9, Timeout_ms) == retvOk) {
+                Printf("%A\r\n", Try, 9, ' ');
+            }
+            else Printf("Timeout\r");
+        }
+        else PShell->CmdError();
+    }
+
+
+    else if(PCmd->NameIs("Regs")) Lora.PrintRegs();
+
+    else if(PCmd->NameIs("Sta")) Lora.PrintState();
+
+    else PShell->CmdUnknown();
 }
 #endif

@@ -11,6 +11,10 @@
 #include "ch.h"
 #include "kl_lib.h"
 #include "EvtMsgIDs.h"
+//#include "board.h"
+#if BUTTONS_ENABLED
+#include "buttons.h"
+#endif
 
 /*
  * Example of other msg:
@@ -44,8 +48,6 @@ EvtMsgQ_t<RMsg_t, RMSG_Q_LEN> MsgQ;
 #define EMSG_DATA8_CNT      7   // ID + 7 bytes = 8 = 2x DWord32
 #define EMSG_DATA16_CNT     3   // ID + 3x2bytes = 7
 
-enum BtnEvt_t {bePress, beRelease, beCombo};
-
 union EvtMsg_t {
     uint32_t DWord[2];
     struct {
@@ -55,10 +57,11 @@ union EvtMsg_t {
                 int32_t Value;
                 uint8_t ValueID;
             } __attribute__((__packed__));
-            struct {
-                uint8_t ID;
-                BtnEvt_t Evt;
-            } __attribute__((__packed__)) BtnInfo;
+//            uint8_t b[EMSG_DATA8_CNT];
+//            uint16_t w16[EMSG_DATA16_CNT];
+#if BUTTONS_ENABLED
+            BtnEvtInfo_t BtnEvtInfo;
+#endif
         } __attribute__((__packed__));
         uint8_t ID;
     } __attribute__((__packed__));
@@ -75,8 +78,6 @@ union EvtMsg_t {
     EvtMsg_t(uint8_t AID, uint8_t AValueID, int32_t AValue) : Value(AValue), ValueID(AValueID), ID(AID) {}
 } __attribute__((__packed__));
 
-
-void PrintfI(const char *format, ...);
 
 template<typename T, uint32_t Sz>
 class EvtMsgQ_t {
@@ -118,10 +119,7 @@ public:
     /* Posts a message into a mailbox.
      * The function returns a timeout condition if the queue is full */
     uint8_t SendNowOrExitI(const T &Msg) {
-        if(chSemGetCounterI(&EmptySem) <= (cnt_t)0) {
-            PrintfI("QOvfl %u\r", ((EvtMsg_t*)&Msg)->ID);
-            return retvOverflow; // Q is full
-        }
+        if(chSemGetCounterI(&EmptySem) <= (cnt_t)0) return retvTimeout; // Q is full
         chSemFastWaitI(&EmptySem);
         *WritePtr++ = Msg;
         if(WritePtr >= &IBuf[Sz]) WritePtr = IBuf;  // Circulate pointer

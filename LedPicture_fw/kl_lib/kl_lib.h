@@ -100,7 +100,7 @@
 
 enum BitOrder_t {boMSB, boLSB};
 enum LowHigh_t  {Low, High};
-enum RiseFall_t {rfRising, rfFalling, rfNone};
+enum RiseFall_t {rfRising, rfFalling, rfNone, rfBoth};
 enum Inverted_t {invNotInverted, invInverted};
 enum PinOutMode_t {omPushPull = 0, omOpenDrain = 1};
 enum BitNumber_t {bitn8, bitn16, bitn32};
@@ -121,11 +121,11 @@ public:
 #define MIN_(a, b)   ( ((a)<(b))? (a) : (b) )
 #define MAX_(a, b)   ( ((a)>(b))? (a) : (b) )
 #define ABS(a)      ( ((a) < 0)? -(a) : (a) )
-#define IS_LIKE(v, precise, deviation)  (((precise - deviation) < v) and (v < (precise + deviation)))
-#define BitIsSet(r, b)  ((r) & (b))
 #define Limit2Bounds(v, vMin, vMax)     { if((v) < (vMin)) { (v) = (vMin); } else if((v) > (vMax)) { (v) = (vMax); } }
 #define LimitMinValue(v, vMin)          { if((v) < (vMin)) { (v) = (vMin); } }
 #define LimitMaxValue(v, vMax)          { if((v) > (vMax)) { (v) = (vMax); } }
+#define IS_LIKE(v, precise, deviation)  (((precise - deviation) < v) and (v < (precise + deviation)))
+#define BitIsSet(r, b)  ((r) & (b))
 
 #define ANY_OF_2(a, b1, b2)             (((a)==(b1)) or ((a)==(b2)))
 #define ANY_OF_3(a, b1, b2, b3)         (((a)==(b1)) or ((a)==(b2)) or ((a)==(b3)))
@@ -152,8 +152,8 @@ static T Average(T *p, uint32_t Len) {
     return Rslt;
 }
 
-static inline int32_t Proportion(int32_t MinX, int32_t MaxX, int32_t MinY, int32_t MaxY, int32_t x) {
-    Limit2Bounds(x, MinX, MaxX);
+template <typename T>
+static inline T Proportion(T MinX, T MaxX, T MinY, T MaxY, T x) {
     return (((x - MaxX) * (MaxY - MinY)) / (MaxX - MinX)) + MaxY;
 }
 
@@ -233,6 +233,10 @@ uint8_t TryStrToFloat(char* S, float *POutput);
 
 #if 1 // ============================ kl_string ================================
 int kl_strcasecmp(const char *s1, const char *s2);
+
+char* kl_strtok(char* s, const char* delim, char**PLast);
+
+int kl_sscanf(const char* s, const char* format, ...);
 
 #endif
 
@@ -314,6 +318,8 @@ public:
     }
     void Stop() { chVTReset(&Tmr); }
 
+    bool IsRunning() { return chVTIsArmed(&Tmr); }
+
     void SetNewPeriod_ms(uint32_t NewPeriod) { Period = TIME_MS2I(NewPeriod); }
     void SetNewPeriod_s(uint32_t NewPeriod) { Period = TIME_S2I(NewPeriod); }
 
@@ -377,8 +383,10 @@ namespace BackupSpc {
     }
 
     static inline void Reset() {
+#if defined STM32L4XX || defined STM32F7XX
         RCC->BDCR |=  RCC_BDCR_BDRST;
         RCC->BDCR &= ~RCC_BDCR_BDRST;
+#endif
     }
 
     // RegN = 0...19
@@ -445,10 +453,17 @@ static inline void ClearWakeupFlag() { RTC->ISR &= ~RTC_ISR_WUTF; }
 #endif
 
 static inline void SetClkSrcLSE() {
+#if defined STM32L4XX || defined STM32F7XX
     RCC->BDCR &= ~RCC_BDCR_RTCSEL;  // Clear bits
     RCC->BDCR |=  0b01UL << 8;
+#endif
 }
-static inline void EnableClk() { RCC->BDCR |= RCC_BDCR_RTCEN; }
+
+static inline void EnableClk() {
+#if defined STM32L4XX || defined STM32F7XX
+    RCC->BDCR |= RCC_BDCR_RTCEN;
+#endif
+}
 
 #define RTC_LSB_MASK     ((uint32_t)0x0000FFFF)  // RTC LSB Mask
 #define PRLH_MSB_MASK    ((uint32_t)0x000F0000)  // RTC Prescaler MSB Mask
@@ -503,6 +518,7 @@ public:
     void Disable() const { TMR_DISABLE(ITmr); }
     void SetUpdateFrequencyChangingPrescaler(uint32_t FreqHz) const;
     void SetUpdateFrequencyChangingTopValue(uint32_t FreqHz) const;
+    void SetUpdateFrequencyChangingBoth(uint32_t FreqHz) const;
     void SetTopValue(uint32_t Value) const { ITmr->ARR = Value; }
     uint32_t GetTopValue() const { return ITmr->ARR; }
     void EnableArrBuffering()  const { ITmr->CR1 |=  TIM_CR1_ARPE; }
@@ -541,6 +557,39 @@ public:
         ITmr->SMCR = tmp;
     }
 
+    // Inputs
+    enum InputPresacaler_t{pscDiv1=0UL, pscDiv2=01UL, pscDiv4=2UL, pscDiv8=3UL};
+    void SetupInput1(uint32_t Mode, InputPresacaler_t Psc, RiseFall_t Rsfll) const {
+        ITmr->CCMR1 = (ITmr->CCMR1 & 0xFF00) | ((uint32_t)Psc << 2)  | (Mode << 0);
+        uint16_t bits = (Rsfll == rfRising)? 0b0000U : (Rsfll == rfFalling)? 0b0010U : 0b1010;
+        ITmr->CCER = (ITmr->CCER & ~(0xAU << 0)) | (bits << 0);
+    }
+    void SetupInput2(uint32_t Mode, InputPresacaler_t Psc, RiseFall_t Rsfll) const {
+        ITmr->CCMR1 = (ITmr->CCMR1 & 0x00FF) | ((uint32_t)Psc << 10) | (Mode << 8);
+        uint16_t bits = (Rsfll == rfRising)? 0b0000U : (Rsfll == rfFalling)? 0b0010U : 0b1010;
+        ITmr->CCER = (ITmr->CCER & ~(0xAU << 4)) | (bits << 4);
+    }
+    void SetupInput3(uint32_t Mode, InputPresacaler_t Psc, RiseFall_t Rsfll) const {
+        ITmr->CCMR2 = (ITmr->CCMR2 & 0xFF00) | ((uint32_t)Psc << 2)  | (Mode << 0);
+        uint16_t bits = (Rsfll == rfRising)? 0b0000U : (Rsfll == rfFalling)? 0b0010U : 0b1010;
+        ITmr->CCER = (ITmr->CCER & ~(0xAU << 8)) | (bits << 8);
+    }
+    void SetupInput4(uint32_t Mode, InputPresacaler_t Psc, RiseFall_t Rsfll) const {
+        ITmr->CCMR2 = (ITmr->CCMR2 & 0x00FF) | ((uint32_t)Psc << 10) | (Mode << 8);
+        uint16_t bits = (Rsfll == rfRising)? 0b0000U : (Rsfll == rfFalling)? 0b0010U : 0b1010;
+        ITmr->CCER = (ITmr->CCER & ~(0xAU << 12)) | (bits << 12);
+    }
+
+    // Outputs
+    void SetupOutput1(uint32_t Mode) const { ITmr->CCMR1 = (ITmr->CCMR1 & 0xFFFEFF00) | ((Mode & 8UL) << 13) | ((Mode & 7UL) << 4); }
+    void SetupOutput2(uint32_t Mode) const { ITmr->CCMR1 = (ITmr->CCMR1 & 0xFEFF00FF) | ((Mode & 8UL) << 21) | ((Mode & 7UL) << 12); }
+    void SetupOutput3(uint32_t Mode) const { ITmr->CCMR2 = (ITmr->CCMR2 & 0xFFFEFF00) | ((Mode & 8UL) << 13) | ((Mode & 7UL) << 4); }
+    void SetupOutput4(uint32_t Mode) const { ITmr->CCMR2 = (ITmr->CCMR2 & 0xFEFF00FF) | ((Mode & 8UL) << 21) | ((Mode & 7UL) << 12); }
+    void EnableCCOutput1() const { ITmr->CCER |= TIM_CCER_CC1E; }
+    void EnableCCOutput2() const { ITmr->CCER |= TIM_CCER_CC2E; }
+    void EnableCCOutput3() const { ITmr->CCER |= TIM_CCER_CC3E; }
+    void EnableCCOutput4() const { ITmr->CCER |= TIM_CCER_CC4E; }
+
     // DMA, Irq, Evt
     void EnableDmaOnTrigger() const { ITmr->DIER |= TIM_DIER_TDE; }
     void EnableDMAOnCapture(uint8_t CaptureReq) const { ITmr->DIER |= (1 << (CaptureReq + 8)); }
@@ -559,6 +608,7 @@ public:
     void ClearCompare3IrqPendingBit() const { ITmr->SR &= ~TIM_SR_CC3IF; }
     void ClearCompare4IrqPendingBit() const { ITmr->SR &= ~TIM_SR_CC4IF; }
     // Check
+    bool IsEnabled() const { return (ITmr->CR1 & TIM_CR1_CEN); }
     bool IsUpdateIrqFired() const { return (ITmr->SR & TIM_SR_UIF); }
     bool IsCompare1IrqFired() const { return (ITmr->SR & TIM_SR_CC1IF); }
     bool IsCompare2IrqFired() const { return (ITmr->SR & TIM_SR_CC2IF); }
@@ -574,12 +624,13 @@ enum PinPullUpDown_t {
     pudPullDown = 0b10
 };
 
-enum PinInputState_t {pssNone, pssLo, pssHi, pssRising, pssFalling};
-
 struct PinInputSetup_t {
     GPIO_TypeDef *PGpio;
     uint16_t Pin;
     PinPullUpDown_t PullUpDown;
+    PinInputSetup_t(GPIO_TypeDef *APGpio, uint16_t APin, PinPullUpDown_t APullUpDown) :
+        PGpio(APGpio), Pin(APin), PullUpDown(APullUpDown) {}
+
 };
 
 struct PwmSetup_t {
@@ -662,9 +713,9 @@ __always_inline
 static inline void PinSetLo(GPIO_TypeDef *PGpio, uint16_t APin) { PGpio->BSRRH = (1 << APin); }
 #elif defined STM32F2XX || defined STM32L1XX || defined STM32F7XX
 __always_inline
-static inline void PinSetHi(GPIO_TypeDef *PGpio, uint32_t APin) { PGpio->BSRR = 1 << APin; }
+static void PinSetHi(GPIO_TypeDef *PGpio, uint32_t APin) { PGpio->BSRR = 1 << APin; }
 __always_inline
-static inline void PinSetLo(GPIO_TypeDef *PGpio, uint32_t APin) { PGpio->BSRR = 1 << (APin + 16);  }
+static void PinSetLo(GPIO_TypeDef *PGpio, uint32_t APin) { PGpio->BSRR = 1 << (APin + 16);  }
 #elif defined STM32F0XX || defined STM32F10X_LD_VL || defined STM32L4XX || defined STM32F103xE
 __always_inline
 static void PinSetHi(GPIO_TypeDef *PGpio, uint32_t APin) { PGpio->BSRR = 1 << APin; }
@@ -710,6 +761,9 @@ static void PinClockEnable(const GPIO_TypeDef *PGpioPort) {
     else if(PGpioPort == GPIOE) RCC->AHB2ENR |= RCC_AHB2ENR_GPIOEEN;
 #ifdef GPIOF
     else if(PGpioPort == GPIOF) RCC->AHB2ENR |= RCC_AHB2ENR_GPIOFEN;
+#endif
+#ifdef GPIOG
+    else if(PGpioPort == GPIOG) RCC->AHB2ENR |= RCC_AHB2ENR_GPIOGEN;
 #endif
     else if(PGpioPort == GPIOH) RCC->AHB2ENR |= RCC_AHB2ENR_GPIOHEN;
 #else
@@ -855,7 +909,7 @@ static inline void PinSetupAnalog(GPIO_TypeDef *PGpioPort, const uint16_t APinNu
 #endif
 }
 
-#ifdef STM32L476
+#ifdef STM32L4XX
 static inline void PinConnectAdc(GPIO_TypeDef *PGpioPort, const uint16_t APinNumber) {
     SET_BIT(PGpioPort->ASCR, 1<<APinNumber);
 }
@@ -990,6 +1044,11 @@ private:
     PinOutMode_t OutputType;
 public:
     void Init() const { PinSetupOut(PGpio, Pin, OutputType); }
+    void InitAndSetHi() const {
+        PinClockEnable(PGpio);
+        PinSetHi(PGpio, Pin);
+        PinSetupOut(PGpio, Pin, OutputType);
+    }
     void Deinit() const { PinSetupAnalog(PGpio, Pin); }
     void SetHi() const { PinSetHi(PGpio, Pin); }
     void SetLo() const { PinSetLo(PGpio, Pin); }
@@ -1003,15 +1062,14 @@ public:
 
 class PinInput_t {
 private:
-    GPIO_TypeDef *PGpio;
-    uint16_t Pin;
-    PinPullUpDown_t PullUpDown;
+    const PinInputSetup_t ISetup;
 public:
-    void Init() const { PinSetupInput(PGpio, Pin, PullUpDown); }
-    void Deinit() const { PinSetupAnalog(PGpio, Pin); }
-    bool IsHi() const { return PinIsHi(PGpio, Pin); }
-    PinInput_t(GPIO_TypeDef *PGpio, uint16_t Pin, PinPullUpDown_t PullUpDown) :
-        PGpio(PGpio), Pin(Pin), PullUpDown(PullUpDown) {}
+    void Init() const { PinSetupInput(ISetup.PGpio, ISetup.Pin, ISetup.PullUpDown); }
+    void Deinit() const { PinSetupAnalog(ISetup.PGpio, ISetup.Pin); }
+    bool IsHi() const { return PinIsHi(ISetup.PGpio, ISetup.Pin); }
+    PinInput_t(const PinInputSetup_t &ASetup) : ISetup(ASetup) {}
+    PinInput_t(GPIO_TypeDef *APGpio, uint16_t APin, PinPullUpDown_t APullUpDown) :
+        ISetup(APGpio, APin, APullUpDown) {}
 };
 
 
@@ -1259,6 +1317,13 @@ static inline void EnableWakeup2Pin(RiseFall_t RiseFall)  {
 }
 static inline void DisableWakeup2Pin() { PWR->CR3 &= ~PWR_CR3_EWUP2; }
 
+static inline void EnableWakeup3Pin(RiseFall_t RiseFall)  {
+    if(RiseFall == rfFalling) PWR->CR4 |= PWR_CR4_WP3;
+    else PWR->CR4 &= ~PWR_CR4_WP3;
+    PWR->CR3 |=  PWR_CR3_EWUP3;
+}
+static inline void DisableWakeup3Pin() { PWR->CR3 &= ~PWR_CR3_EWUP3; }
+
 static inline void EnableWakeup4Pin(RiseFall_t RiseFall)  {
     if(RiseFall == rfFalling) PWR->CR4 |= PWR_CR4_WP4;
     else PWR->CR4 &= ~PWR_CR4_WP4;
@@ -1274,6 +1339,11 @@ static inline void EnableWakeup5Pin(RiseFall_t RiseFall)  {
 static inline void DisableWakeup5Pin() { PWR->CR3 &= ~PWR_CR3_EWUP5; }
 
 static inline bool WasInStandby()      { return (PWR->SR1 & PWR_SR1_SBF); }
+static inline bool WokeUpByWKUP1()     { return (PWR->SR1 & PWR_SR1_WUF1); }
+static inline bool WokeUpByWKUP2()     { return (PWR->SR1 & PWR_SR1_WUF2); }
+static inline bool WokeUpByWKUP3()     { return (PWR->SR1 & PWR_SR1_WUF3); }
+static inline bool WokeUpByWKUP4()     { return (PWR->SR1 & PWR_SR1_WUF4); }
+static inline bool WokeUpByWKUP5()     { return (PWR->SR1 & PWR_SR1_WUF5); }
 static inline bool WkupOccured()       { return (PWR->SR1 & 0x1F); }
 static inline void ClearStandbyFlag()  { PWR->SCR |= PWR_SCR_CSBF; }
 static inline void ClearWUFFlags()     { PWR->SCR |= 0x1F; }
@@ -1339,6 +1409,8 @@ public:
             int32_t Bitrate_Hz, BitNumber_t BitNumber = bitn8) const;
     void Enable ()       const { PSpi->CR1 |=  SPI_CR1_SPE; }
     void Disable()       const { PSpi->CR1 &= ~SPI_CR1_SPE; }
+    void PrintFreq() const;
+
     // DMA
     void EnableTxDma()   const { PSpi->CR2 |=  SPI_CR2_TXDMAEN; }
     void DisableTxDma()  const { PSpi->CR2 &= ~SPI_CR2_TXDMAEN; }
@@ -1394,6 +1466,29 @@ public:
         while(!(PSpi->SR & SPI_SR_RXNE));
         return PSpi->DR;
     }
+    void Transmit(uint8_t Params, uint8_t *ptr, uint32_t Len) {
+        PSpi->CR1 &= ~SPI_CR1_SPE; // Disable SPI
+        PSpi->CR1 = SPI_CR1_SSM | SPI_CR1_SSI | SPI_CR1_MSTR;
+        if(Params & 0x80) PSpi->CR1 |= SPI_CR1_LSBFIRST; // 0 = MSB, 1 = LSB
+        if(Params & 0x40) PSpi->CR1 |= SPI_CR1_CPOL;     // 0 = IdleLow, 1 = IdleHigh
+        if(Params & 0x20) PSpi->CR1 |= SPI_CR1_CPHA;     // 0 = FirstEdge, 1 = SecondEdge
+        PSpi->CR1 |= (Params & 0x07) << 3; // Setup divider
+#if defined SPI_CR2_FRXTH
+        PSpi->CR2 = ((uint16_t)0b0111 << 8) | SPI_CR2_FRXTH;   // 8 bit, RXNE generated when 8 bit is received
+#else
+        PSpi->CR2 = ((uint16_t)0b0111 << 8);
+#endif
+        (void)PSpi->SR; // Read Status reg to clear some flags
+        // Do it
+        PSpi->CR1 |=  SPI_CR1_SPE; // Enable SPI
+        while(Len) {
+            *((volatile uint8_t*)&PSpi->DR) = *ptr;
+            while(!(PSpi->SR & SPI_SR_RXNE));  // Wait for SPI transmission to complete
+            *ptr = *((volatile uint8_t*)&PSpi->DR);
+            ptr++;
+            Len--;
+        }
+    }
 #if defined STM32L4XX
 //    void WriteRead2Bytes(uint8_t b1, uint8_t b2) const {
 //        *((volatile uint8_t*)&PSpi->DR) = b1;
@@ -1423,14 +1518,23 @@ namespace Flash {
 
 void UnlockFlash();
 void LockFlash();
+void UnlockOptionBytes();
+void LockOptionBytes();
 
+
+void ClearPendingFlags();
 uint8_t ErasePage(uint32_t PageAddress);
+
 #if defined STM32L4XX
-uint8_t ProgramDWord(uint32_t Address, uint64_t Data);
+uint8_t ProgramBuf32(uint32_t Address, uint32_t *PData, int32_t ASzBytes);
 #else
 uint8_t ProgramWord(uint32_t Address, uint32_t Data);
 uint8_t ProgramBuf(void *PData, uint32_t ByteSz, uint32_t Addr);
 #endif
+
+void WriteOptionBytes(uint32_t Value);
+
+void ToggleBootBankAndReset();
 
 bool FirmwareIsLocked();
 void LockFirmware();
@@ -1517,7 +1621,6 @@ enum APBDiv_t {apbDiv1=0b000, apbDiv2=0b100, apbDiv4=0b101, apbDiv8=0b110, apbDi
 
 class Clk_t {
 private:
-    uint8_t EnableHSE();
     uint8_t EnablePLL();
     uint8_t EnableMSI();
 public:
@@ -1532,6 +1635,7 @@ public:
     uint8_t SwitchToMSI();
     void DisableHSE() { RCC->CR &= ~RCC_CR_HSEON; }
     uint8_t EnableHSI();
+    uint8_t EnableHSE();
     void DisableHSI() { RCC->CR &= ~RCC_CR_HSION; }
     void DisablePLL() { RCC->CR &= ~RCC_CR_PLLON; }
     void DisableMSI() { RCC->CR &= ~RCC_CR_MSION; }
@@ -1724,6 +1828,7 @@ enum ClkSrc_t {csHSI=0b00, csHSE=0b01, csPLL=0b10};
 #else
 enum PllSrc_t {plsHSIdiv2=0b00, plsHSIdivPREDIV=0b01, plsHSEdivPREDIV=0b10, plsHSI48divPREDIV=0b11};
 enum ClkSrc_t {csHSI=0b00, csHSE=0b01, csPLL=0b10, csHSI48=0b11};
+enum uartClk_t {uartclkPCLK = 0, uartclkSYSCLK = 1, uartclkLSE = 2, uartclkHSI = 3 };
 #endif
 
 enum AHBDiv_t {
@@ -1916,13 +2021,6 @@ enum i2cClk_t { i2cclkPCLK1 = 0, i2cclkSYSCLK = 1, i2cclkHSI = 2 };
 enum uartClk_t {uartclkPCLK = 0, uartclkSYSCLK = 1, uartclkHSI = 2, uartclkLSE = 3 };
 
 class Clk_t {
-private:
-    uint8_t EnableHSE();
-    uint8_t EnablePLL();
-    void EnablePLLROut() { RCC->PLLCFGR |= RCC_PLLCFGR_PLLREN; }
-    void EnablePLLQOut() { RCC->PLLCFGR |= RCC_PLLCFGR_PLLQEN; }
-
-    uint8_t EnableSai1();
 public:
     // Frequency values
     uint32_t AHBFreqHz;     // HCLK: AHB Buses, Core, Memory, DMA
@@ -1936,31 +2034,44 @@ public:
 
     uint8_t EnableHSI();
     uint8_t EnableMSI();
+    uint8_t EnableHSE();
+    uint8_t EnablePLL();
     void EnableLSE()  { RCC->BDCR |= RCC_BDCR_LSEON; }
+    void EnablePllROut() { RCC->PLLCFGR |= RCC_PLLCFGR_PLLREN; }
+    void EnablePllQOut() { RCC->PLLCFGR |= RCC_PLLCFGR_PLLQEN; }
+    uint8_t EnablePllSai1();
+    uint8_t EnablePllSai2();
 
     void DisableHSE() { RCC->CR &= ~RCC_CR_HSEON; }
     void DisableHSI() { RCC->CR &= ~RCC_CR_HSION; }
     void DisablePLL();
     void DisableMSI() { RCC->CR &= ~RCC_CR_MSION; }
-    void DisableSai1();
+    void DisablePllSai1();
+    void DisablePllSai2();
 
     bool IsLseOn()      { return (RCC->BDCR & RCC_BDCR_LSERDY); }
 
     void SetupBusDividers(AHBDiv_t AHBDiv, APBDiv_t APB1Div, APBDiv_t APB2Div);
 
     // PLL and PLLSAI
-    void SetupPllSrc(PllSrc_t Src) { MODIFY_REG(RCC->PLLCFGR, RCC_PLLCFGR_PLLSRC, ((uint32_t)Src)); }
-    uint8_t SetupPllMulDiv(uint32_t M, uint32_t N, uint32_t R, uint32_t Q);
+    uint8_t SetupM(uint32_t M);
+    void SetupPllSrc(PllSrc_t PllSrc);
+    PllSrc_t GetPllSrc();
+    uint8_t SetupPll(uint32_t N, uint32_t R, uint32_t Q);
     void SetupPllSai1(uint32_t N, uint32_t R, uint32_t Q, uint32_t P);
+    void SetupPllSai2(uint32_t N, uint32_t R, uint32_t P);
     void EnableSai1ROut() { SET_BIT(RCC->PLLSAI1CFGR, RCC_PLLSAI1CFGR_PLLSAI1REN); }
     void EnableSai1QOut() { SET_BIT(RCC->PLLSAI1CFGR, RCC_PLLSAI1CFGR_PLLSAI1QEN); }
     void EnableSai1POut() { SET_BIT(RCC->PLLSAI1CFGR, RCC_PLLSAI1CFGR_PLLSAI1PEN); }
+    void EnableSai2POut() { SET_BIT(RCC->PLLSAI2CFGR, RCC_PLLSAI2CFGR_PLLSAI2PEN); }
 
     void UpdateFreqValues();
-    void EnablePrefeth() { FLASH->ACR |= FLASH_ACR_PRFTEN | FLASH_ACR_DCEN | FLASH_ACR_ICEN; }
+    void EnablePrefetch() { FLASH->ACR |= FLASH_ACR_PRFTEN | FLASH_ACR_DCEN | FLASH_ACR_ICEN; }
     void SetupFlashLatency(uint8_t AHBClk_MHz, MCUVoltRange_t VoltRange);
     void SetVoltageRange(MCUVoltRange_t VoltRange);
     void SetupSai1Qas48MhzSrc();
+    void SetupSai1Qas48MhzSrcWidhADC();
+    void SetupPllQas48MhzSrc();
     // LSI
     void EnableLSI() {
         RCC->CSR |= RCC_CSR_LSION;
@@ -2142,7 +2253,7 @@ public:
     void SetupPllSai(uint32_t N, uint32_t P, uint32_t Q, uint32_t R);
 
     void UpdateFreqValues();
-    void EnablePrefeth() { FLASH->ACR |= FLASH_ACR_PRFTEN | FLASH_ACR_PRFTEN; }
+    void EnablePrefetch() { FLASH->ACR |= FLASH_ACR_PRFTEN | FLASH_ACR_PRFTEN; }
     void SetupFlashLatency(uint8_t AHBClk_MHz, uint32_t MCUVoltage_mv);
     void SetVoltageScale(MCUVoltScale_t VoltScale);
     void Setup48Mhz();

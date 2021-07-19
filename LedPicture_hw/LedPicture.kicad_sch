@@ -11130,10 +11130,10 @@
       (reference "C53") (unit 1) (value "0.1u") (footprint "Capacitors:CAP_0402")
     )
     (path "/37b59c6a-5ca6-4288-9c93-33e667820335/a8048d46-ac27-4ff0-8713-0fa22fea808a"
-      (reference "C54") (unit 1) (value "18pF") (footprint "Capacitors:CAP_0603_Silks")
+      (reference "C54") (unit 1) (value "10pF") (footprint "Capacitors:CAP_0603_Silks")
     )
     (path "/37b59c6a-5ca6-4288-9c93-33e667820335/6c61bfb0-dde0-465b-b61e-87d018a83322"
-      (reference "C55") (unit 1) (value "18pF") (footprint "Capacitors:CAP_0603_Silks")
+      (reference "C55") (unit 1) (value "10pF") (footprint "Capacitors:CAP_0603_Silks")
     )
     (path "/feb44233-2282-4c1c-9c56-2707e0cf5355"
       (reference "C56") (unit 1) (value "1u") (footprint "Capacitors:CAP_0603_Silks")

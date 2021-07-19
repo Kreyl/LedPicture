@@ -7,10 +7,12 @@
 
 #pragma once
 
+#include "kl_lib.h"
 #include "inttypes.h"
 #include <sys/cdefs.h>
-#include "shell.h"
 #include <stdlib.h> // for random
+
+void Printf(const char *format, ...);
 
 struct ColorHSV_t;
 
@@ -19,7 +21,7 @@ struct ColorHSV_t;
 #define RANDOM_CLR_BRT      255
 
 // Mixing two colors
-#define ClrMix(C, B, L)     ((C * L + B * (255 - L)) / 255)
+#define ClrMix(Fore, Back, Weight)     ((Fore * Weight + Back * (255 - Weight)) / 255)
 
 __attribute__((__always_inline__))
 static inline int32_t Abs32(int32_t w) { return (w < 0)? -w : w; }
@@ -112,18 +114,18 @@ public:
     // H: 0...360, S: 0...100, V: 0...100
     void FromHSV(uint16_t H, uint8_t S, uint8_t V) {
         // Calc chroma: 0...255
-        int32_t C = ((int32_t)V * (int32_t)S * 255L) / 10000L;
+        int32_t C = ((int32_t)V * (int32_t)S * 255) / 10000;
         // Tmp values
-        int32_t X = 60L - Abs32((H % 120L) - 60L); // 0...60
-        X = (C * X) / 60L;
-        int32_t m = (((int32_t)V * 255L) / 100L) - C; // To add the same amount to each component, to match lightness
+        int32_t X = 60 - Abs32((H % 120) - 60); // 0...60
+        X = (C * X) / 60;
+        int32_t m = (((int32_t)V * 255) / 100) - C; // To add the same amount to each component, to match lightness
         // RGB
-        if     (H < 60L)  { R = C+m; G = X+m; B = m;   } // [0; 60)
-        else if(H < 120L) { R = X+m; G = C+m; B = m;   }
-        else if(H < 180L) { R = m;   G = C+m; B = X+m; }
-        else if(H < 240L) { R = m;   G = X+m; B = C+m; }
-        else if(H < 300L) { R = X+m; G = m;   B = C+m; }
-        else              { R = C+m; G = m;   B = X+m; } // [300; 360]
+        if     (H < 60)  { R = C+m; G = X+m; B = m;   } // [0; 60)
+        else if(H < 120) { R = X+m; G = C+m; B = m;   }
+        else if(H < 180) { R = m;   G = C+m; B = X+m; }
+        else if(H < 240) { R = m;   G = X+m; B = C+m; }
+        else if(H < 300) { R = X+m; G = m;   B = C+m; }
+        else             { R = C+m; G = m;   B = X+m; } // [300; 360]
     }
 
     bool IsRandom() const { return (R == 0 and G == 0 and B == 0 and Brt == RANDOM_CLR_BRT); }
@@ -157,11 +159,18 @@ public:
         rslt |= ((uint16_t)B) >> 3;
         return rslt;
     }
-    // Mixage
-    void BeMixOf(const Color_t &Fore, const Color_t &Back, uint32_t ABrt) {
-        R = ClrMix(Fore.R, Back.R, ABrt);
-        G = ClrMix(Fore.G, Back.G, ABrt);
-        B = ClrMix(Fore.B, Back.B, ABrt);
+    // ==== Mixage ====
+    // Weight = 0: result is Back; Weight = 255: result is Fore; otherwise result is mix
+    void MixwWeight(const Color_t &Fore, const Color_t &Back, uint32_t Weight) {
+        R = ClrMix(Fore.R, Back.R, Weight);
+        G = ClrMix(Fore.G, Back.G, Weight);
+        B = ClrMix(Fore.B, Back.B, Weight);
+    }
+    // Weight = 0: not changed; Weight = 255: result is Fore; otherwise result is mix
+    void MixwWeight(const Color_t &Fore, uint32_t Weight) {
+        R = ClrMix(Fore.R, R, Weight);
+        G = ClrMix(Fore.G, G, Weight);
+        B = ClrMix(Fore.B, B, Weight);
     }
     void MixWith(const Color_t &Clr) {
         if(Clr.Brt == 0) return;    // Alien is off, no changes with us
@@ -306,12 +315,44 @@ struct ColorHSV_t {
     };
 
     void Adjust(const ColorHSV_t &Target) {
-        if     (H < Target.H) H++;
-        else if(H > Target.H) H--;
+        int16_t dH = Target.H - H;
+//        Printf(" Adjust dH %i (%u %u)\r", dH, H, Target.H);
+        if      ((0<dH and dH<=180) or -180>dH) {
+            if (H >= 360-1) H = 0;
+            else H++;
+        }
+        else if ((0>dH and dH>=-180) or 180<dH) {
+            if (H == 0) H = 360-1;
+            else H--;
+        }
         if     (S < Target.S) S++;
         else if(S > Target.S) S--;
         if     (V < Target.V) V++;
         else if(V > Target.V) V--;
+    }
+
+    // Weight = 0: result is Back; Weight = 255: result is Fore; otherwise result is mix
+    void MixwWeight(const ColorHSV_t &Fore, const ColorHSV_t &Back, uint32_t Weight) {
+        uint8_t R, G, B;
+        uint8_t ForeR, ForeG, ForeB;
+        uint8_t BackR, BackG, BackB;
+        Fore.ToRGB(&ForeR, &ForeG, &ForeB);
+        Back.ToRGB(&BackR, &BackG, &BackB);
+        R = ClrMix(ForeR, BackR, Weight);
+        G = ClrMix(ForeG, BackG, Weight);
+        B = ClrMix(ForeB, BackB, Weight);
+        FromRGB(R, G, B);
+    }
+    // Weight = 0: not changed; Weight = 255: result is Fore; otherwise result is mix
+    void MixwWeight(const ColorHSV_t &Fore, uint32_t Weight) {
+        uint8_t R, G, B;
+        uint8_t ForeR, ForeG, ForeB;
+        ToRGB(&R, &G, &B);
+        Fore.ToRGB(&ForeR, &ForeG, &ForeB);
+        R = ClrMix(ForeR, R, Weight);
+        G = ClrMix(ForeG, G, Weight);
+        B = ClrMix(ForeB, B, Weight);
+        FromRGB(R, G, B);
     }
 
     uint32_t DelayToNextAdj(const ColorHSV_t &Target, uint32_t SmoothValue) {
@@ -325,18 +366,18 @@ struct ColorHSV_t {
 
     void ToRGB(uint8_t *PR, uint8_t *PG, uint8_t *PB) const {
         // Calc chroma: 0...255
-        int32_t C = ((int32_t)V * (int32_t)S * 255L) / 10000L;
+        int32_t C = ((int32_t)V * (int32_t)S * 255) / 10000;
         // Tmp values
-        int32_t X = 60L - Abs32((H % 120L) - 60L); // 0...60
-        X = (C * X) / 60L;
+        int32_t X = 60 - Abs32((H % 120) - 60); // 0...60
+        X = (C * X) / 60;
         int32_t m = (((int32_t)V * 255) / 100) - C; // To add the same amount to each component, to match lightness
         // RGB
-        if     (H < 60L)  { *PR = C+m; *PG = X+m; *PB = m;   } // [0; 60)
-        else if(H < 120L) { *PR = X+m; *PG = C+m; *PB = m;   }
-        else if(H < 180L) { *PR = m;   *PG = C+m; *PB = X+m; }
-        else if(H < 240L) { *PR = m;   *PG = X+m; *PB = C+m; }
-        else if(H < 300L) { *PR = X+m; *PG = m;   *PB = C+m; }
-        else              { *PR = C+m; *PG = m;   *PB = X+m; } // [300; 360]
+        if     (H < 60)  { *PR = C+m; *PG = X+m; *PB = m;   } // [0; 60)
+        else if(H < 120) { *PR = X+m; *PG = C+m; *PB = m;   }
+        else if(H < 180) { *PR = m;   *PG = C+m; *PB = X+m; }
+        else if(H < 240) { *PR = m;   *PG = X+m; *PB = C+m; }
+        else if(H < 300) { *PR = X+m; *PG = m;   *PB = C+m; }
+        else             { *PR = C+m; *PG = m;   *PB = X+m; } // [300; 360]
     }
 
     void ToRGB(Color_t &AColor) { ToRGB(&AColor.R, &AColor.G, &AColor.B); }
@@ -357,15 +398,15 @@ struct ColorHSV_t {
         if(Min > Blue) Min = Blue;
         // H
         if(Max == Min) H = 0;
-        else if(Max == Red and Green >= Blue) H = (60L * (Green - Blue)) / (Max - Min) + 0L;
-        else if(Max == Red and Green <  Blue) H = (60L * (Green - Blue)) / (Max - Min) + 360L;
-        else if(Max == Green)                 H = (60L * (Blue - Red))   / (Max - Min) + 120L;
-        else if(Max == Blue)                  H = (60L * (Red - Green))  / (Max - Min) + 240L;
+        else if(Max == Red and Green >= Blue) H = (60 * (Green - Blue)) / (Max - Min) + 0;
+        else if(Max == Red and Green <  Blue) H = (60 * (Green - Blue)) / (Max - Min) + 360;
+        else if(Max == Green)                 H = (60 * (Blue - Red))   / (Max - Min) + 120;
+        else if(Max == Blue)                  H = (60 * (Red - Green))  / (Max - Min) + 240;
         // S
         if(Max == 0) S = 0;
-        else S = 100L - (100L * Min) / Max;
+        else S = 100 - (100 * Min) / Max;
         // V
-        V = (100L * Max) / 255L;
+        V = (100 * Max) / 255;
     }
 
     void FromRGB(Color_t Clr) {
@@ -383,7 +424,6 @@ struct ColorHSV_t {
     ColorHSV_t() : H(0), S(0), V(0) {}
     ColorHSV_t(uint16_t AH, uint8_t AS, uint8_t AV) : H(AH), S(AS), V(AV) {}
     ColorHSV_t(const ColorHSV_t &AClr) : H(AClr.H), S(AClr.S), V(AClr.V) {}
-    ColorHSV_t(Color_t &AClr) { FromRGB(AClr); }
 } __attribute__((packed));
 
 // Colors

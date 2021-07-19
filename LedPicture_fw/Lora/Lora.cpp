@@ -17,6 +17,7 @@ Lora_t Lora;
 #define XTAL_FREQ       32000000
 #define FREQ_STEP       61.03515625
 #define RX_BUFFER_SIZE  256
+#define RSSI_OFFSET_HF  -157 // Constant, see datasheet 5.5.5
 
 static const Spi_t ISpi {SX_SPI};
 
@@ -49,12 +50,15 @@ const FskBandwidth_t FskBandwidths[] = {
     { 300000, 0x00 }, // Invalid Bandwidth
 };
 
-void SX_DIO0IrqHandler() {
-    PrintfI("IrqDIO0\r");
-}
+void SX_DIO0IrqHandler() { Lora.IIrqHandler(); }
 
-void SX_DIO1IrqHandler() {
-    PrintfI("IrqDIO1\r");
+void Lora_t::IIrqHandler() {
+    PrintfI("IrqDIO0\r");
+    if(Settings.RxCallback != nullptr) {
+        Settings.RxCallback();
+        Settings.RxCallback = nullptr;
+    }
+    else chThdResumeI(&ThdRef, MSG_OK);  // NotNull check performed inside chThdResumeI
 }
 
 uint8_t Lora_t::Init() {
@@ -66,7 +70,7 @@ uint8_t Lora_t::Init() {
     PinSetLo(SX_NRESET);
     chThdSleepMilliseconds(1); // Wait more than 100us
     // Init IRQ
-    DIO0.Init(ttFalling);
+    DIO0.Init(ttRising);
 
     // SPI
     PinSetupOut      (SX_NSS, omPushPull);
@@ -93,6 +97,8 @@ uint8_t Lora_t::Init() {
     EnterSleep(); // XXX is it required?
 
     // ==== Write registers ====
+    // Errata regs
+    WriteReg(REG_LR_DETECTOPTIMIZE, 0b00000011);  // MSB should be set to 0 after each reset (POR on manual)
     // FSK regs
     WriteReg(REG_OPMODE,         0b00000000); // FSK mode, LoraRegs, HF mode, SLEEP
     WriteReg(REG_LNA,            0b00100011); // LNA Gain = max, def LNA curr, LNA boost on
@@ -109,7 +115,7 @@ uint8_t Lora_t::Init() {
     WriteReg(REG_FIFOTHRESH,     0x8F);       // TxStartCondition = at least one byte in the FIFO, trigger FifoLevel interrupt, when number of bytes in FIFO >= 16
     WriteReg(REG_IMAGECAL,       0b00000010); // Calibration of the receiver depending on the temperature dis, TempThreshold = 10 dg, TempMonitor is on
     WriteReg(REG_DIOMAPPING1,    0x00);
-    WriteReg(REG_DIOMAPPING2,    0x30);
+    WriteReg(REG_DIOMAPPING2,    0x00);
 
     // LoRa regs
     WriteReg(REG_OPMODE, 0b10000000); // LoRa mode, LoraRegs, HF mode, SLEEP
@@ -118,7 +124,8 @@ uint8_t Lora_t::Init() {
     PrintState();
 
     // Be FSK again
-    WriteReg(REG_OPMODE,         0b00000000); // FSK mode, LoraRegs, HF mode, SLEEP
+//    WriteReg(REG_OPMODE,         0b00000000); // FSK mode, LoraRegs, HF mode, SLEEP
+    Printf("Lora Init ok\r\n");
     return retvOk;
 }
 
@@ -129,8 +136,13 @@ void Lora_t::PrintState() {
     Printf("DIO: %u %u\r", PinIsHi(SX_DIO0_GPIO, SX_DIO0_PIN), PinIsHi(SX_DIO1_GPIO, SX_DIO1_PIN));
 }
 
+void Lora_t::PrintRegs() {
+    for(uint8_t i=1; i<=0x70; i++) PrintfI("0x%02X\r\n", ReadReg(i));
+    PrintfI("########\r\n");
+}
+
 void Lora_t::TransmitByLora(uint8_t *ptr, uint8_t Sz) {
-    if(IqInverted) {
+    if(Settings.IqInverted) {
         WriteReg(REG_LR_INVERTIQ, ((ReadReg(REG_LR_INVERTIQ) & RFLR_INVERTIQ_TX_MASK & RFLR_INVERTIQ_RX_MASK) | RFLR_INVERTIQ_RX_OFF | RFLR_INVERTIQ_TX_ON));
         WriteReg(REG_LR_INVERTIQ2, RFLR_INVERTIQ2_ON);
     }
@@ -153,47 +165,101 @@ void Lora_t::TransmitByLora(uint8_t *ptr, uint8_t Sz) {
     }
     // Write payload buffer
     WriteFifo(ptr, Sz);
-    EnterTXLora();
-}
 
-void Lora_t::EnterTXLora() {
-    if(FreqHopOn) {
-        WriteReg(REG_LR_IRQFLAGSMASK, RFLR_IRQFLAGS_RXTIMEOUT |
-                                          RFLR_IRQFLAGS_RXDONE |
-                                          RFLR_IRQFLAGS_PAYLOADCRCERROR |
-                                          RFLR_IRQFLAGS_VALIDHEADER |
-                                          //RFLR_IRQFLAGS_TXDONE |
-                                          RFLR_IRQFLAGS_CADDONE |
-                                          //RFLR_IRQFLAGS_FHSSCHANGEDCHANNEL |
-                                          RFLR_IRQFLAGS_CADDETECTED);
+    // ==== IRQs ==== 1 means disabled
+    WriteReg(REG_LR_IRQFLAGSMASK, RFLR_IRQFLAGS_RXTIMEOUT |
+                                  RFLR_IRQFLAGS_RXDONE |
+                                  RFLR_IRQFLAGS_PAYLOADCRCERROR |
+                                  RFLR_IRQFLAGS_VALIDHEADER |
+//                                  RFLR_IRQFLAGS_TXDONE | // The only enabled irq
+                                  RFLR_IRQFLAGS_CADDONE |
+                                  RFLR_IRQFLAGS_FHSSCHANGEDCHANNEL |
+                                  RFLR_IRQFLAGS_CADDETECTED);
 
-        // DIO0=TxDone, DIO2=FhssChangeChannel
-        WriteReg(REG_DIOMAPPING1, (ReadReg(REG_DIOMAPPING1) & RFLR_DIOMAPPING1_DIO0_MASK & RFLR_DIOMAPPING1_DIO2_MASK) | RFLR_DIOMAPPING1_DIO0_01 | RFLR_DIOMAPPING1_DIO2_00);
-    }
-    else {
-        WriteReg(REG_LR_IRQFLAGSMASK, RFLR_IRQFLAGS_RXTIMEOUT |
-                                          RFLR_IRQFLAGS_RXDONE |
-//                                          RFLR_IRQFLAGS_PAYLOADCRCERROR |
-//                                          RFLR_IRQFLAGS_VALIDHEADER |
-                                          RFLR_IRQFLAGS_TXDONE |
-//                                          RFLR_IRQFLAGS_CADDONE |
-//                                          RFLR_IRQFLAGS_FHSSCHANGEDCHANNEL |
-                                          RFLR_IRQFLAGS_CADDETECTED
-                                          );
-
-        // DIO0=TxDone
-        WriteReg(REG_DIOMAPPING1, (ReadReg(REG_DIOMAPPING1) & RFLR_DIOMAPPING1_DIO0_MASK) | RFLR_DIOMAPPING1_DIO0_01); // DIO0 = TxDone irq
-    }
-    WriteReg(REG_LR_IRQFLAGS, 0xFF);
+    // DIO0 = TxDone irq
+    WriteReg(REG_DIOMAPPING1, (ReadReg(REG_DIOMAPPING1) & RFLR_DIOMAPPING1_DIO0_MASK) | RFLR_DIOMAPPING1_DIO0_01);
+    WriteReg(REG_LR_IRQFLAGS, 0xFF); // Clear all irq flags
     SetOpMode(RF_OPMODE_TRANSMITTER);
     DIO0.EnableIrq(IRQ_PRIO_MEDIUM);
 }
 
-void Lora_t::Reset() {
-    PinSetLo(SX_NRESET);
-    chThdSleepMilliseconds(1);
-    PinSetHi(SX_NRESET);
-    chThdSleepMilliseconds(6); // Wait more than 5ms
+uint8_t Lora_t::ReceiveByLora(uint8_t *ptr, uint8_t Sz, uint32_t Timeout_ms) {
+    if(Settings.IqInverted) {
+        WriteReg(REG_LR_INVERTIQ, ((ReadReg(REG_LR_INVERTIQ) & RFLR_INVERTIQ_TX_MASK & RFLR_INVERTIQ_RX_MASK) | RFLR_INVERTIQ_RX_ON | RFLR_INVERTIQ_TX_OFF));
+        WriteReg(REG_LR_INVERTIQ2, RFLR_INVERTIQ2_ON);
+    }
+    else {
+        WriteReg(REG_LR_INVERTIQ, ((ReadReg(REG_LR_INVERTIQ ) & RFLR_INVERTIQ_TX_MASK & RFLR_INVERTIQ_RX_MASK) | RFLR_INVERTIQ_RX_OFF | RFLR_INVERTIQ_TX_OFF));
+        WriteReg(REG_LR_INVERTIQ2, RFLR_INVERTIQ2_OFF);
+    }
+
+    // ERRATA 2.3 - Receiver Spurious Reception of a LoRa Signal
+    if(Settings.Bandwidth == bwLora500kHz) {
+        WriteReg(REG_LR_DETECTOPTIMIZE, ReadReg(REG_LR_DETECTOPTIMIZE) | 0x80);
+    }
+    else { // 125/250 kHz
+        WriteReg(REG_LR_DETECTOPTIMIZE, ReadReg(REG_LR_DETECTOPTIMIZE) & 0x7F);
+        WriteReg(REG_LR_IFFREQ2, 0x00);
+        WriteReg(REG_LR_IFFREQ1, 0x40);
+    }
+
+    // ==== IRQs ==== 1 means disabled
+    WriteReg(REG_LR_IRQFLAGSMASK, RFLR_IRQFLAGS_RXTIMEOUT |
+                                  //RFLR_IRQFLAGS_RXDONE |
+                                  //RFLR_IRQFLAGS_PAYLOADCRCERROR |
+                                  RFLR_IRQFLAGS_VALIDHEADER |
+                                  RFLR_IRQFLAGS_TXDONE |
+                                  RFLR_IRQFLAGS_CADDONE |
+                                  RFLR_IRQFLAGS_FHSSCHANGEDCHANNEL |
+                                  RFLR_IRQFLAGS_CADDETECTED);
+
+    // DIO0=RxDone
+    WriteReg(REG_DIOMAPPING1, (ReadReg(REG_DIOMAPPING1) & RFLR_DIOMAPPING1_DIO0_MASK) | RFLR_DIOMAPPING1_DIO0_00);
+    WriteReg(REG_LR_IRQFLAGS, 0xFF); // Clear all irq flags
+
+    // FIFO
+    WriteReg(REG_LR_FIFORXBASEADDR, 0);
+    WriteReg(REG_LR_FIFOADDRPTR, 0);
+
+#if 1 // ==== Enter RX and wait IRQ ====
+    chSysLock();
+    DIO0.EnableIrq(IRQ_PRIO_MEDIUM);
+
+//    SetOpMode(RFLR_OPMODE_RECEIVER_SINGLE);
+    SetOpMode(RFLR_OPMODE_RECEIVER);
+
+    msg_t Rslt = chThdSuspendTimeoutS(&ThdRef, TIME_MS2I(Timeout_ms)); // Wait IRQ
+    chSysUnlock();
+    // Will be here when IRQ will fire, or timeout occur - with appropriate message
+    if(Rslt == MSG_TIMEOUT) {   // Nothing received, timeout occured
+        EnterStandby();         // Get out of RX mode
+        return retvTimeout;
+    }
+#endif
+    // ==== RxDone happened ====
+    // Clear RxDone IRQ
+    WriteReg(REG_LR_IRQFLAGS, RFLR_IRQFLAGS_RXDONE);
+
+    uint8_t irqFlags = ReadReg(REG_LR_IRQFLAGS);
+    // Is CRC ok?
+    if(irqFlags & RFLR_IRQFLAGS_PAYLOADCRCERROR_MASK) {
+        WriteReg(REG_LR_IRQFLAGS, RFLR_IRQFLAGS_PAYLOADCRCERROR_MASK); // Clear IRQ
+        return retvCRCError;
+    }
+
+    // Read SNR and RSSI
+    Settings.SNR = (((int16_t)ReadReg(REG_LR_PKTSNRVALUE)) + 2) >> 2;
+    int16_t rssiReg = ReadReg(REG_LR_PKTRSSIVALUE);
+    if(Settings.SNR < 0) Settings.RSSI = RSSI_OFFSET_HF + rssiReg + (rssiReg >> 4) + Settings.SNR;
+    else                 Settings.RSSI = RSSI_OFFSET_HF + rssiReg + (rssiReg >> 4);
+
+    WriteReg(REG_LR_FIFOADDRPTR, ReadReg(REG_LR_FIFORXCURRENTADDR));
+    // Read FIFO
+    uint8_t RegSz = ReadReg(REG_LR_RXNBBYTES);
+    if(RegSz > Sz) RegSz = Sz;
+    ReadFifo(ptr, RegSz);
+
+    return retvOk;
 }
 
 void Lora_t::RxChainCalibration() {
@@ -225,25 +291,36 @@ void Lora_t::RxChainCalibration() {
     SetChannel(initialFreq);
 }
 
-void Lora_t::SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth, SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate, bool ImplicitHeaderModeOn, uint16_t preambleLen) {
-    // Set Lora modem
+void Lora_t::SetLoraModem() {
     uint8_t opmode = ReadReg(REG_OPMODE);
     if((opmode & RFLR_OPMODE_LONGRANGEMODE_ON) == 0) { // FSK, switch to Lora
         WriteReg(REG_OPMODE, (opmode & RF_OPMODE_MASK) | RF_OPMODE_SLEEP); // Enter sleep
-        WriteReg(REG_OPMODE, (opmode & RFLR_OPMODE_LONGRANGEMODE_MASK) | RFLR_OPMODE_LONGRANGEMODE_ON);
+        WriteReg(REG_OPMODE,
+                (opmode & RFLR_OPMODE_LONGRANGEMODE_MASK)
+                        | RFLR_OPMODE_LONGRANGEMODE_ON);
+        WriteReg(REG_DIOMAPPING1, 0x00);
+        WriteReg(REG_DIOMAPPING2, 0x00);
     }
+}
+
+/*
+ *   Bandwidth: bwLora125kHz, bwLora250kHz, bwLora500kHz
+ *   SpreadingFactor: sprfact64chipsPersym, ..., sprfact4096chipsPersym
+ *   coderate: coderate4s5, coderate4s6, coderate4s7, coderate4s8
+ *   preambleLen
+ */
+void Lora_t::SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth,
+        SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate,
+        bool FixLen, uint16_t preambleLen) {
+    SetLoraModem();
     SetTxPower(power);
+    Settings.Bandwidth = bandwidth;
 
     bool LowDatarateOptimize =
             ((bandwidth == bwLora125kHz) and ((SpreadingFactor == sprfact2048chipsPersym) or (SpreadingFactor == sprfact4096chipsPersym))) ||
             ((bandwidth == bwLora250kHz) and ( SpreadingFactor == sprfact4096chipsPersym));
 
-    if(FreqHopOn) {
-        WriteReg(REG_LR_PLLHOP, (ReadReg(REG_LR_PLLHOP) & RFLR_PLLHOP_FASTHOP_MASK) | RFLR_PLLHOP_FASTHOP_ON);
-        WriteReg(REG_LR_HOPPERIOD, FreqHopPeriod);
-    }
-
-    WriteReg(REG_LR_MODEMCONFIG1, ((uint8_t)bandwidth << 4) | ((uint8_t)coderate << 1) | (ImplicitHeaderModeOn? 1 : 0));
+    WriteReg(REG_LR_MODEMCONFIG1, ((uint8_t)bandwidth << 4) | ((uint8_t)coderate << 1) | (FixLen? 1 : 0));
     WriteReg(REG_LR_MODEMCONFIG2, ((uint8_t)SpreadingFactor << 4) | (1 << 2)); // RX CRC on
     WriteReg(REG_LR_MODEMCONFIG3, (LowDatarateOptimize? (1 << 3) : 0) | (1 << 2)); // Agc auto on
 
@@ -259,6 +336,63 @@ void Lora_t::SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth, SXSpreadingFa
         WriteReg(REG_LR_DETECTIONTHRESHOLD, RFLR_DETECTIONTHRESH_SF7_TO_SF12);
     }
 }
+
+void Lora_t::SetupRxConfigLora(SXLoraBW_t bandwidth,
+        SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate,
+        uint16_t preambleLen, uint16_t symbTimeout,
+        bool FixLen, uint8_t payloadLen) {
+    SetLoraModem();
+    Settings.Bandwidth = bandwidth;
+
+    bool LowDatarateOptimize =
+            ((bandwidth == bwLora125kHz) and ((SpreadingFactor == sprfact2048chipsPersym) or (SpreadingFactor == sprfact4096chipsPersym))) ||
+            ((bandwidth == bwLora250kHz) and ( SpreadingFactor == sprfact4096chipsPersym));
+
+    WriteReg(REG_LR_MODEMCONFIG1, ((uint8_t)bandwidth << 4) | ((uint8_t)coderate << 1) | (FixLen? 1 : 0));
+    WriteReg(REG_LR_MODEMCONFIG2, ((uint8_t)SpreadingFactor << 4) | (1 << 2) | (uint8_t)((symbTimeout >> 8) & 0b11U)); // RX CRC on
+    WriteReg(REG_LR_MODEMCONFIG3, (LowDatarateOptimize? (1 << 3) : 0) | (1 << 2)); // Agc auto on
+
+    WriteReg(REG_LR_SYMBTIMEOUTLSB, (uint8_t)(symbTimeout & 0xFF));
+
+    WriteReg(REG_LR_PREAMBLEMSB, (preambleLen >> 8) & 0x00FF);
+    WriteReg(REG_LR_PREAMBLELSB, preambleLen & 0xFF);
+
+    if(FixLen) WriteReg(REG_LR_PAYLOADLENGTH, payloadLen);
+
+    // See ERRATA 2.1
+    if(bandwidth == bwLora500kHz) {
+        if(Settings.Channel > 862000000) {
+            // ERRATA 2.1 - Sensitivity Optimization with a 500 kHz Bandwidth
+            WriteReg(REG_LR_HIGHBWOPTIMIZE1, 0x02);
+            WriteReg(REG_LR_HIGHBWOPTIMIZE2, 0x64);
+        }
+        else {
+            // ERRATA 2.1 - Sensitivity Optimization with a 500 kHz Bandwidth
+            WriteReg(REG_LR_HIGHBWOPTIMIZE1, 0x02);
+            WriteReg(REG_LR_HIGHBWOPTIMIZE2, 0x7F);
+        }
+    }
+    else {
+        // ERRATA 2.1 - Sensitivity Optimization with a 500 kHz Bandwidth
+        WriteReg(REG_LR_HIGHBWOPTIMIZE1, 0x03);
+    }
+
+    if(SpreadingFactor == sprfact64chipsPersym) {
+        WriteReg(REG_LR_DETECTOPTIMIZE,
+                          (ReadReg(REG_LR_DETECTOPTIMIZE) &
+                            RFLR_DETECTIONOPTIMIZE_MASK) |
+                            RFLR_DETECTIONOPTIMIZE_SF6);
+        WriteReg(REG_LR_DETECTIONTHRESHOLD, RFLR_DETECTIONTHRESH_SF6);
+    }
+    else {
+        WriteReg(REG_LR_DETECTOPTIMIZE,
+                     (ReadReg( REG_LR_DETECTOPTIMIZE ) &
+                     RFLR_DETECTIONOPTIMIZE_MASK ) |
+                     RFLR_DETECTIONOPTIMIZE_SF7_TO_SF12);
+        WriteReg(REG_LR_DETECTIONTHRESHOLD, RFLR_DETECTIONTHRESH_SF7_TO_SF12);
+    }
+}
+
 
 void Lora_t::SetTxPower(int8_t power) {
     uint8_t paConfig = 0;
@@ -297,18 +431,20 @@ void Lora_t::SetTxPower(int8_t power) {
 }
 
 void Lora_t::SetChannel(uint32_t freq) {
-    Channel = freq;
+    Settings.Channel = freq;
     freq = (uint32_t)((double)freq / (double)FREQ_STEP);
     WriteReg(REG_FRFMSB, (uint8_t)((freq >> 16) & 0xFF));
     WriteReg(REG_FRFMID, (uint8_t)((freq >> 8)  & 0xFF ));
     WriteReg(REG_FRFLSB, (uint8_t)( freq        & 0xFF));
 }
 
+
+
 void Lora_t::SetOpMode(uint8_t opMode) {
     WriteReg(REG_OPMODE, (ReadReg(REG_OPMODE) & RF_OPMODE_MASK) | opMode);
 }
 
-
+#if 1 // ====================== Read/Write Reg/FIFO ============================
 void Lora_t::WriteReg(uint8_t RegAddr, uint8_t Value) {
     RegAddr |= 0x80; // MSB==1 means write
     NssLo();
@@ -339,3 +475,4 @@ void Lora_t::ReadFifo(uint8_t *ptr, uint8_t Sz) {
     while(Sz--) *ptr++ = ISpi.ReadWriteByte(0);
     NssHi();
 }
+#endif
