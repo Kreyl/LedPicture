@@ -142,6 +142,9 @@
 #define I2C3_DMA_RX     STM32_DMA_STREAM_ID(1, 3)
 #define I2C3_DMA_CHNL   3
 
+#define NPX_DMA         STM32_DMA_STREAM_ID(1, 5)
+#define NPX_DMA_CHNL    1
+
 #if ADC_REQUIRED
 #define ADC_DMA         STM32_DMA1_STREAM1
 #define ADC_DMA_MODE    STM32_DMA_CR_CHSEL(0) |   /* DMA1 Stream1 Channel0 */ \

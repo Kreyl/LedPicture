@@ -7,6 +7,7 @@
 #include "Sequences.h"
 #include "kl_i2c.h"
 #include "Lora.h"
+#include "ws2812b.h"
 #endif
 #if 1 // ======================== Variables & prototypes =======================
 // Forever
@@ -20,7 +21,24 @@ void ITask();
 LedSmooth_t Led{LED_PIN};
 PinInput_t PinUsbDetect(USB_DETECT_PIN, pudPullDown);
 PinOutput_t PwrEn(PWR_EN);
+
+static const NeopixelParams_t LedParams(NPX_SPI, NPX_GPIO, NPX_PIN, NPX_AF,
+        NPX_DMA, NPX_DMA_MODE(NPX_DMA_CHNL),
+        NPX_LED_CNT,
+        npxRGB);
+Neopixels_t Npx(&LedParams);
+
 #endif
+
+void SetPix(uint8_t x, uint8_t y, Color_t Clr) {
+    uint32_t Indx = 0;
+    if     (x <=  9 and y <= 13) Indx = y * 10 + x;
+    else if(x >= 10 and y <= 13) Indx = y * 10 + x + 130;
+    else if(x <=  9 and y >= 14) Indx = y * 10 + x + 140;
+    else if(x >= 10 and y >= 14) Indx = y * 10 + x + 270;
+    Npx.ClrBuf[Indx] = Clr;
+}
+
 
 int main(void) {
     // Start Watchdog. Will reset in main thread by periodic 1 sec events.
@@ -56,7 +74,9 @@ int main(void) {
     Lora.Init();
     Lora.SetChannel(868000000);
 
-
+    Npx.Init();
+    Npx.SetAll(clBlack);
+    Npx.SetCurrentColors();
 
     Led.StartOrRestart(lsqOk);
     // UsbMsd.Init();
@@ -178,11 +198,28 @@ void OnCmd(Shell_t *PShell) {
         }
         else PShell->CmdError();
     }
-
-
     else if(PCmd->NameIs("Regs")) Lora.PrintRegs();
-
     else if(PCmd->NameIs("Sta")) Lora.PrintState();
+
+    else if(PCmd->NameIs("SetAll")) {
+        Color_t Clr;
+        if(PCmd->GetClrRGB(&Clr) == retvOk) {
+            Npx.SetAll(Clr);
+            Npx.SetCurrentColors();
+            PShell->Ok();
+        }
+        else PShell->CmdError();
+    }
+
+    else if(PCmd->NameIs("SetPix")) {
+        uint8_t x, y;
+        Color_t Clr;
+        if(PCmd->GetParams<uint8_t>(5, &x, &y, &Clr.R, &Clr.G, &Clr.B) == retvOk) {
+            SetPix(x, y, Clr);
+            Npx.SetCurrentColors();
+        }
+        else PShell->CmdError();
+    }
 
     else PShell->CmdUnknown();
 }
