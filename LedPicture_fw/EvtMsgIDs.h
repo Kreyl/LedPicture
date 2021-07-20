@@ -14,6 +14,8 @@ enum EvtMsgId_t {
     evtIdShellCmdRcvd,
     evtIdEverySecond,
 
+    evtIdNewPix,
+
     // Usb
     evtIdUsbConnect,
     evtIdUsbDisconnect,

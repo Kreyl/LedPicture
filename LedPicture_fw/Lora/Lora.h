@@ -61,7 +61,7 @@ private:
     // Middle level
     void RxChainCalibration();
     void SetOpMode(uint8_t opMode);
-    void SetTxPower(int8_t power);
+    void SetTxPower(uint8_t power);
     void SetLoraModem();
     // Modes
     void EnterStandby() { SetOpMode(RF_OPMODE_STANDBY); }
@@ -82,7 +82,7 @@ public:
 
     void SetChannel(uint32_t freq);
     bool IsChannelFreeLora(uint32_t freq, int16_t rssiThresh, uint32_t maxCarrierSenseTime);
-    void SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth,
+    void SetupTxConfigLora(uint8_t power, SXLoraBW_t bandwidth,
             SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate,
             SXHeaderMode_t HeaderMode);
     void SetupRxConfigLora(SXLoraBW_t bandwidth,

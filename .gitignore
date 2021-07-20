@@ -7,3 +7,5 @@ LedPcb10x14/LedPcb10x14-backups/
 *.pdf
 LedPicture_hw/LedPicture-backups/
 *.step
+*.exe
+Control/__pycache__/

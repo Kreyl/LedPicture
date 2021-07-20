@@ -306,13 +306,13 @@ void Lora_t::SetLoraModem() {
     }
 }
 
-/*
+/*   Power: [2; 20]
  *   Bandwidth: bwLora125kHz, bwLora250kHz, bwLora500kHz
  *   SpreadingFactor: sprfact64chipsPersym, ..., sprfact4096chipsPersym
  *   coderate: coderate4s5, coderate4s6, coderate4s7, coderate4s8
  *   preambleLen
  */
-void Lora_t::SetupTxConfigLora(int8_t power, SXLoraBW_t bandwidth,
+void Lora_t::SetupTxConfigLora(uint8_t power, SXLoraBW_t bandwidth,
         SXSpreadingFactor_t SpreadingFactor, SXCodingRate_t coderate, SXHeaderMode_t HeaderMode) {
     if(SpreadingFactor == sprfact64chipsPersym and HeaderMode == hdrmodeExplicit) {
         Printf("Lora bad mode\r"); // See datasheet
@@ -400,7 +400,7 @@ void Lora_t::SetupRxConfigLora(SXLoraBW_t bandwidth,
 }
 
 
-void Lora_t::SetTxPower(int8_t power) {
+void Lora_t::SetTxPower(uint8_t power) {
     uint8_t paConfig = 0;
     uint8_t paDac = 0;
 
