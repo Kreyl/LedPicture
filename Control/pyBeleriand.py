@@ -1,6 +1,8 @@
 import sys
+import csv
 import serial
 import Usbhost
+import time
  
 import pygame
 from pygame.locals import *
@@ -16,11 +18,20 @@ pixels_arr = []
 INIT_W = 550
 INIT_H = 700
 
+
+
+def geta(r, g, b):
+    return int(max(r,g,b) * 150 / 255)
+
 colors = []
-colors.append([0,255,0,100])
-colors.append([255,0,0,100])
-colors.append([180,180,180,100])
+with open("colors.csv", "r") as f_obj:
+    reader = csv.reader(f_obj)
+    for row in reader:
+        colors.append([int(item) for item in row])
 colors.append([0,0,0,0])
+
+for y in range(PIXELS_Y):
+    pixels_arr.append([len(colors) - 1] * PIXELS_X)
 
  
 pygame.init()
@@ -29,16 +40,32 @@ fpsClock = pygame.time.Clock()
 
 IMAGE_SURF = pygame.image.load(IMAGE_NAME)
 ERASER_SURF = pygame.image.load("eraser.png")
+CLEAR_SURF = pygame.image.load("clear.png")
+SENDALL_SURF = pygame.image.load("SendAll.png")
  
-width, height = int(IMAGE_SURF.get_width() * 1.1), IMAGE_SURF.get_height()
+width, height = int(IMAGE_SURF.get_width() * 1.1), int(IMAGE_SURF.get_height() * 1.1)
 WORK_ZONE = pygame.Surface((width, height))
 WORK_ZONE.fill((255, 255, 255))
 WORK_ZONE.blit(IMAGE_SURF, (0, 0))
 PROPORTION = width/height
 PIXEL_WIDTH = width / 1.1 / PIXELS_X
-PIXEL_HEIGHT = height / PIXELS_Y
+PIXEL_HEIGHT = height / 1.1 / PIXELS_Y
 PALETTE_ITEM_WIDTH = width * (0.1 / 1.1)
 PALETTE_ITEM_HEIGHT = height / len(colors)
+BUTTON_WIDTH = width / 1.1 / 2
+BUTTON_HEIGHT = height * (0.1 / 1.1)
+pygame.draw.rect(WORK_ZONE, (0,0,0), pygame.Rect(0, height - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT), 3)
+pygame.draw.rect(WORK_ZONE, (0,0,0), pygame.Rect(BUTTON_WIDTH, height - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT), 3)
+prop = CLEAR_SURF.get_width()/CLEAR_SURF.get_height()
+clear_w_new = int(min(BUTTON_WIDTH, BUTTON_HEIGHT * prop))
+clear_scale_factor = clear_w_new / CLEAR_SURF.get_width()
+clear_h_new = int(CLEAR_SURF.get_height() * clear_scale_factor)
+WORK_ZONE.blit(pygame.transform.scale(CLEAR_SURF, (clear_w_new, clear_h_new)), (0, height - BUTTON_HEIGHT))
+prop = SENDALL_SURF.get_width()/SENDALL_SURF.get_height()
+sendall_w_new = int(min(BUTTON_WIDTH, BUTTON_HEIGHT * prop))
+sendall_scale_factor = sendall_w_new / SENDALL_SURF.get_width()
+sendall_h_new = int(SENDALL_SURF.get_height() * sendall_scale_factor)
+WORK_ZONE.blit(pygame.transform.scale(SENDALL_SURF, (sendall_w_new, sendall_h_new)), (BUTTON_WIDTH, height - BUTTON_HEIGHT))
 
 PIXELS_SURF = pygame.Surface((width, height), SRCALPHA)
 PIXELS_SURF.fill((0,0,0,0))
@@ -73,7 +100,13 @@ def get_color(pos, scale_factor):
     if (width - PALETTE_ITEM_WIDTH) <= (pos[0] / scale_factor) <= width:
         return int(pos[1] / scale_factor // PALETTE_ITEM_HEIGHT)
     return -1
-
+    
+def get_button(pos, scale_factor):
+    if (height - BUTTON_HEIGHT) <= (pos[1] / scale_factor) <= height:
+        if (pos[0] / scale_factor) < BUTTON_WIDTH:
+            return 1
+        if BUTTON_WIDTH < (pos[0] / scale_factor) < BUTTON_WIDTH*2:
+            return 2
 
 screen = pygame.display.set_mode((INIT_W, INIT_H), RESIZABLE)
 w_new = int(min(INIT_W, INIT_H * PROPORTION))
@@ -81,13 +114,12 @@ scale_factor = w_new / width
 h_new = int(height * scale_factor)
 resized_surf = pygame.transform.scale(WORK_ZONE, (w_new, h_new))
 
-mouse_pressed = False
  
-def sendColor(x, y, current_color):
+def sendColor(x, y, R, G, B):
+    #time.sleep(0.1)
     while ser.inWaiting() > 0:
         ser.readall()
-
-    Cmd: str = 'SetPix %d %d, %d %d %d' % (x, y, colors[current_color][0], colors[current_color][1], colors[current_color][2])
+    Cmd: str = 'SetPix %d %d, %d %d %d' % (x, y, R,G,B)
     print(Cmd)
     bCmd: bytes = bytes(Cmd + '\r\n', encoding='utf-8')
     for i in range(4):
@@ -97,7 +129,19 @@ def sendColor(x, y, current_color):
         if reply.startswith("Ok"):
             return True   
     print("error sending command")
-    return False    
+    return False  
+
+def DrawColor(x, y, color):
+    pixels_arr[y][x] = color
+    pygame.draw.rect(
+        PIXELS_SURF,
+        colors[color],
+        (PIXEL_WIDTH * x, PIXEL_HEIGHT * y, PIXEL_WIDTH, PIXEL_HEIGHT)
+    ) 
+
+def sendAndDrawColor(x, y, color):
+    if sendColor(x, y, colors[color][0], colors[color][1], colors[color][2]):
+        DrawColor(x, y, color)
 
 while True:
   
@@ -111,23 +155,28 @@ while True:
             h_new = int(height * scale_factor)
             resized_surf = pygame.transform.scale(WORK_ZONE, (w_new, h_new))
         if event.type == MOUSEBUTTONDOWN:
-            mouse_pressed = True
-        if event.type == MOUSEBUTTONUP:
-            mouse_pressed = False
+            res = get_button(event.pos, scale_factor)
+            if res:
+                if res == 1: # Clear
+                    if sendColor(255, 0, 0,0,0): # send CLS, x=255 is a Magic Number: fill with mentioned RGB
+                        # Remove pixels from picture if success
+                        for y in range(PIXELS_Y):
+                            for x in range(PIXELS_X):
+                                if pixels_arr[y][x] != len(colors) - 1:
+                                    DrawColor(x, y, len(colors) - 1)
+                                    
+                if res == 2: # SendAll
+                    for y in range(PIXELS_Y):
+                        for x in range(PIXELS_X):
+                            if pixels_arr[y][x] != len(colors) - 1:
+                                sendAndDrawColor(x, y, pixels_arr[y][x])
             color = get_color(event.pos, scale_factor)
             if len(colors) > color > -1:
                 current_color = color
                 draw_palette_rect(color)
-        #if event.type in (MOUSEBUTTONDOWN, MOUSEBUTTONUP) or (event.type == MOUSEMOTION and mouse_pressed):
-        if event.type == MOUSEBUTTONDOWN:
             x, y = get_pixel(event.pos, scale_factor)
             if y < PIXELS_Y and x < PIXELS_X:
-                if sendColor(x, y, current_color):
-                    pygame.draw.rect(
-                        PIXELS_SURF,
-                        colors[current_color],
-                        (PIXEL_WIDTH * x, PIXEL_HEIGHT * y, PIXEL_WIDTH, PIXEL_HEIGHT)
-                    )
+                sendAndDrawColor(x, y, current_color)
     screen.fill((0,0,0))
     screen.blit(resized_surf, (0, 0))
     screen.blit(pygame.transform.scale(PIXELS_SURF, (w_new, h_new)), (0,0))

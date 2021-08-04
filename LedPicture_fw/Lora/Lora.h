@@ -63,9 +63,6 @@ private:
     void SetOpMode(uint8_t opMode);
     void SetTxPower(uint8_t power);
     void SetLoraModem();
-    // Modes
-    void EnterStandby() { SetOpMode(RF_OPMODE_STANDBY); }
-    void EnterSleep()   { SetOpMode(RF_OPMODE_SLEEP); }
 public:
     struct {
         uint32_t Channel;
@@ -92,6 +89,10 @@ public:
     uint8_t Init();
     uint32_t TransmitByLora(uint8_t *ptr, uint8_t Sz);
     uint8_t ReceiveByLora(uint8_t *ptr, uint8_t *pSz, uint32_t Timeout_ms);
+
+    // Modes
+    void EnterStandby() { SetOpMode(RF_OPMODE_STANDBY); }
+    void EnterSleep()   { SetOpMode(RF_OPMODE_SLEEP); }
 
     // Dbg
     void PrintState();

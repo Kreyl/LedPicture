@@ -24,11 +24,12 @@ union rPkt_t {
 
 #if 1 // =================== Channels, cycles, Rssi  ===========================
 #define RCHNL_HZ        868000000
+
 // [2; 20]
 #define TX_PWR_dBm      5
 
 #define LORA_BW         bwLora125kHz
-#define LORA_SPREADRFCT sprfact256chipsPersym
+#define LORA_SPREADRFCT sprfact128chipsPersym
 #define LORA_CODERATE   coderate4s5
 
 #endif

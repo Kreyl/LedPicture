@@ -43,7 +43,8 @@ __noreturn
 void rLevel1_t::ITask() {
     while(true) {
         uint8_t Len = RPKT_LEN;
-        uint8_t Rslt = Lora.ReceiveByLora((uint8_t*)&PktRx, &Len, 450);
+        Lora.SetupRxConfigLora(LORA_BW, LORA_SPREADRFCT, LORA_CODERATE, hdrmodeExplicit, 64);
+        uint8_t Rslt = Lora.ReceiveByLora((uint8_t*)&PktRx, &Len, 27000);
         if(Rslt == retvOk) {
             Printf("SNR: %d; RSSI: %d; Len: %u\r", Lora.RxParams.SNR, Lora.RxParams.RSSI, Len);
             EvtMsg_t msg {evtIdNewPix};
@@ -55,11 +56,11 @@ void rLevel1_t::ITask() {
             EvtQMain.SendNowOrExit(msg);
             // Send reply
             PktTx.Reply = 0xCA115EA1;
-            chThdSleepMilliseconds(4);
+            //chThdSleepMilliseconds(1);
+            Lora.SetupTxConfigLora(TX_PWR_dBm, LORA_BW, LORA_SPREADRFCT, LORA_CODERATE, hdrmodeExplicit);
             Lora.TransmitByLora((uint8_t*)&PktTx, RPKT_LEN);
         }
         else if(Rslt == retvCRCError) Printf("CRC Err\r");
-//        chThdSleepMilliseconds(450);
     } // while true
 }
 #endif // task
@@ -73,8 +74,8 @@ uint8_t rLevel1_t::Init() {
     //RMsgQ.Init();
     if(Lora.Init() == retvOk) {
         Lora.SetChannel(868000000);
-        Lora.SetupTxConfigLora(5, LORA_BW, LORA_SPREADRFCT, LORA_CODERATE, hdrmodeExplicit);
-        Lora.SetupRxConfigLora(LORA_BW, LORA_SPREADRFCT, LORA_CODERATE, hdrmodeExplicit, 64);
+//        Lora.SetupTxConfigLora(TX_PWR_dBm, LORA_BW, LORA_SPREADRFCT, LORA_CODERATE, hdrmodeExplicit);
+//        Lora.SetupRxConfigLora(LORA_BW, LORA_SPREADRFCT, LORA_CODERATE, hdrmodeExplicit, 64);
         // Thread
         chThdCreateStatic(warLvl1Thread, sizeof(warLvl1Thread), HIGHPRIO, (tfunc_t)rLvl1Thread, NULL);
         return retvOk;
